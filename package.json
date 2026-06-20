@@ -1,0 +1,12 @@
+{
+  "name": "shift-core-monorepo",
+  "private": true,
+  "version": "0.0.0",
+  "description": "The Shift family shared foundation — Brain (@shift/core), feel-layer (@shift/ui), reliability (@shift/infra).",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  }
+}

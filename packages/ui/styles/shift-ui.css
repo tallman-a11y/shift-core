@@ -1,0 +1,117 @@
+/* ============================================================================
+   @shift/ui — the shared FEEL layer.   "Shared feel, sacred face."
+   ----------------------------------------------------------------------------
+   This file carries the Shift-grade *smoothness, flow, depth, and breathing room*
+   that every product shares — NOT appearance. It is BRAND-NEUTRAL on purpose.
+
+   Each product maps its OWN signature tokens into the --shift-* contract below
+   (e.g. WeldShift: --shift-accent: var(--arc); --shift-surface: var(--bg-card)),
+   so its colors, borders, and identity render unchanged — only the motion and
+   spacing become consistent. NEVER hardcode a brand color here. NEVER use this to
+   reskin a product's signature visuals (sparks canvases, custom borders, etc.).
+   ========================================================================== */
+
+/* ---- Theme token contract — products DEFINE/MAP these (fallbacks are neutral) ---- */
+:where(:root) {
+  /* Surfaces & color — a product overrides by mapping its own signature tokens. */
+  --shift-accent:     #5b8cff;                    /* product maps e.g. var(--arc) / var(--em) */
+  --shift-accent-2:   #22d3ee;
+  --shift-surface:    rgba(22, 28, 38, 0.92);     /* card top (lighter than page = lifts) */
+  --shift-surface-2:  rgba(12, 16, 24, 0.94);     /* card bottom */
+  --shift-border:     rgba(255, 255, 255, 0.10);
+  --shift-shadow:     rgba(0, 0, 0, 0.66);
+  --shift-highlight:  rgba(255, 255, 255, 0.16);
+
+  /* Radius scale. */
+  --shift-radius-sm: 0.75rem;
+  --shift-radius:    1.25rem;
+  --shift-radius-lg: 1.9rem;
+
+  /* MOTION — the smoothness. The single most shared thing across the family. */
+  --shift-ease:      cubic-bezier(0.22, 1, 0.36, 1);
+  --shift-dur:       0.35s;
+  --shift-dur-fast:  0.2s;
+
+  /* Breathing room — the readability standard (line-heights). */
+  --shift-leading-body:  1.7;
+  --shift-leading-loose: 1.9;
+}
+
+/* ---- Reset: box-sizing ONLY. ----------------------------------------------
+   ⚠️ NEVER add `* { margin:0; padding:0 }` here. Unlayered, it overrides every
+   Tailwind v4 spacing utility (they live in @layer utilities) and silently zeros
+   all spacing site-wide. Frameworks' preflight already resets in the BASE layer,
+   where utilities can override it. (Hard-learned: LendShift 2026-06-19.) */
+*, *::before, *::after { box-sizing: border-box; }
+
+/* ---- Elevation: the cushioned depth. Shape shared, color themed. ---- */
+.shift-card {
+  background: linear-gradient(158deg, var(--shift-surface) 0%, var(--shift-surface-2) 100%);
+  border: 1px solid var(--shift-border);
+  border-radius: var(--shift-radius-lg);
+  box-shadow:
+    0 30px 80px var(--shift-shadow),
+    0 8px 24px rgba(0, 0, 0, 0.50),
+    inset 0 1px 0 var(--shift-highlight),
+    inset 0 -24px 48px rgba(0, 0, 0, 0.32);
+}
+
+/* ---- Lift: the physical "pick up" hover. Timing shared = the flow. ---- */
+.shift-lift {
+  transition:
+    transform   var(--shift-dur) var(--shift-ease),
+    box-shadow  var(--shift-dur) var(--shift-ease),
+    border-color var(--shift-dur) ease;
+}
+.shift-lift:hover { transform: translateY(-6px); }
+
+/* ---- Accent bloom: lifts and glows in the product's OWN accent. ----
+   Reads a per-element `--accent` if set, else falls back to the product theme. */
+.shift-accent-card {
+  transition:
+    transform   var(--shift-dur) var(--shift-ease),
+    box-shadow  var(--shift-dur) var(--shift-ease),
+    border-color var(--shift-dur) ease;
+}
+.shift-accent-card:hover {
+  transform: translateY(-6px);
+  border-color: color-mix(in srgb, var(--accent, var(--shift-accent)) 48%, transparent);
+  box-shadow:
+    0 40px 100px var(--shift-shadow),
+    0 0 70px color-mix(in srgb, var(--accent, var(--shift-accent)) 22%, transparent),
+    inset 0 1px 0 var(--shift-highlight),
+    inset 0 -24px 48px rgba(0, 0, 0, 0.32);
+}
+
+/* ---- Button lift: gradient CTA that rises and presses. ---- */
+.shift-btn-lift {
+  transition:
+    transform  var(--shift-dur-fast) var(--shift-ease),
+    box-shadow var(--shift-dur-fast) var(--shift-ease);
+}
+.shift-btn-lift:hover  { transform: translateY(-2px); }
+.shift-btn-lift:active { transform: translateY(0); }
+
+/* ---- Breathing room: the readability standard. ---- */
+.shift-body       { line-height: var(--shift-leading-body); }
+.shift-body-loose { line-height: var(--shift-leading-loose); }
+
+/* ---- Motion utilities — float + staggered entrance. ---- */
+@keyframes shift-float-y { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-9px); } }
+.shift-float      { animation: shift-float-y 7s ease-in-out infinite; }
+.shift-float-slow { animation: shift-float-y 10s ease-in-out infinite 1s; }
+
+@keyframes shift-slide-up { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+.shift-stagger > * { animation: shift-slide-up 0.4s var(--shift-ease) both; }
+.shift-stagger > *:nth-child(1) { animation-delay: 0ms; }
+.shift-stagger > *:nth-child(2) { animation-delay: 70ms; }
+.shift-stagger > *:nth-child(3) { animation-delay: 140ms; }
+.shift-stagger > *:nth-child(4) { animation-delay: 210ms; }
+.shift-stagger > *:nth-child(5) { animation-delay: 280ms; }
+.shift-stagger > *:nth-child(6) { animation-delay: 350ms; }
+
+/* ---- Accessibility: honor reduced-motion (quality floor includes this). ---- */
+@media (prefers-reduced-motion: reduce) {
+  .shift-lift, .shift-accent-card, .shift-btn-lift { transition: none; }
+  .shift-float, .shift-float-slow, .shift-stagger > * { animation: none; }
+}

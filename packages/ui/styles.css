@@ -1,0 +1,4 @@
+/* Entry point for CSS importers (PostCSS/Tailwind) that resolve bare package
+   specifiers to the file at node_modules/@shift/ui/styles.css.
+   The exports field is for bundlers; CSS @import resolvers need this file. */
+@import "./styles/shift-ui.css";
