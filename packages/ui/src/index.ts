@@ -1,4 +1,7 @@
 // React components
+export { ShiftCard } from "./components/ShiftCard";
+export type { ShiftCardProps } from "./components/ShiftCard";
+
 export { TiltCard } from "./components/TiltCard";
 export type { TiltCardProps } from "./components/TiltCard";
 

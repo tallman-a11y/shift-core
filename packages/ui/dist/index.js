@@ -1,12 +1,31 @@
+// src/components/ShiftCard.tsx
+import { motion } from "framer-motion";
+import { jsx } from "react/jsx-runtime";
+function ShiftCard({ children, className = "", blur = 12, style, ...props }) {
+  return /* @__PURE__ */ jsx(
+    motion.div,
+    {
+      className: `shift-card ${className}`,
+      style: {
+        backdropFilter: `blur(${blur}px)`,
+        WebkitBackdropFilter: `blur(${blur}px)`,
+        ...style
+      },
+      ...props,
+      children
+    }
+  );
+}
+
 // src/components/TiltCard.tsx
 import { useRef } from "react";
 import {
-  motion,
+  motion as motion2,
   useMotionValue,
   useTransform,
   useSpring
 } from "framer-motion";
-import { jsx } from "react/jsx-runtime";
+import { jsx as jsx2 } from "react/jsx-runtime";
 function TiltCard({
   children,
   stiffness = 300,
@@ -38,8 +57,8 @@ function TiltCard({
     rawX.set(0);
     rawY.set(0);
   }
-  return /* @__PURE__ */ jsx(
-    motion.div,
+  return /* @__PURE__ */ jsx2(
+    motion2.div,
     {
       ref,
       onMouseMove,
@@ -54,12 +73,12 @@ function TiltCard({
 // src/components/HolographicShine.tsx
 import { useRef as useRef2 } from "react";
 import {
-  motion as motion2,
+  motion as motion3,
   useMotionTemplate,
   useMotionValue as useMotionValue2,
   useSpring as useSpring2
 } from "framer-motion";
-import { jsx as jsx2, jsxs } from "react/jsx-runtime";
+import { jsx as jsx3, jsxs } from "react/jsx-runtime";
 function HolographicShine({
   rgb = "255,255,255",
   intensity = 0.18,
@@ -88,8 +107,8 @@ function HolographicShine({
       style: { position: "relative", ...style },
       children: [
         children,
-        /* @__PURE__ */ jsx2(
-          motion2.div,
+        /* @__PURE__ */ jsx3(
+          motion3.div,
           {
             style: {
               position: "absolute",
@@ -107,8 +126,8 @@ function HolographicShine({
 
 // src/components/ScrollGenerateCard.tsx
 import React3, { useEffect, useState } from "react";
-import { motion as motion3, useInView } from "framer-motion";
-import { jsx as jsx3, jsxs as jsxs2 } from "react/jsx-runtime";
+import { motion as motion4, useInView } from "framer-motion";
+import { jsx as jsx4, jsxs as jsxs2 } from "react/jsx-runtime";
 var DEFAULT_WIDTHS = [72, 85, 60, 80];
 function ScrollGenerateCard({
   children,
@@ -134,7 +153,7 @@ function ScrollGenerateCard({
   const widths = skeletonWidths.slice(0, skeletonRows);
   return /* @__PURE__ */ jsxs2("div", { ref, className, style: { position: "relative" }, children: [
     phase === "skeleton" && /* @__PURE__ */ jsxs2(
-      motion3.div,
+      motion4.div,
       {
         initial: { opacity: 0 },
         animate: { opacity: 1 },
@@ -150,8 +169,8 @@ function ScrollGenerateCard({
           overflow: "hidden"
         },
         children: [
-          /* @__PURE__ */ jsx3(
-            motion3.div,
+          /* @__PURE__ */ jsx4(
+            motion4.div,
             {
               animate: { x: ["-100%", "200%"] },
               transition: { duration: 1.1, repeat: Infinity, ease: "linear" },
@@ -163,7 +182,7 @@ function ScrollGenerateCard({
               }
             }
           ),
-          widths.map((w, i) => /* @__PURE__ */ jsx3(
+          widths.map((w, i) => /* @__PURE__ */ jsx4(
             "div",
             {
               style: {
@@ -181,11 +200,12 @@ function ScrollGenerateCard({
       }
     ),
     phase === "live" && children(phase),
-    phase === "idle" && /* @__PURE__ */ jsx3("div", { style: { visibility: "hidden" }, children: children("idle") })
+    phase === "idle" && /* @__PURE__ */ jsx4("div", { style: { visibility: "hidden" }, children: children("idle") })
   ] });
 }
 export {
   HolographicShine,
   ScrollGenerateCard,
+  ShiftCard,
   TiltCard
 };

@@ -32,14 +32,34 @@ var index_exports = {};
 __export(index_exports, {
   HolographicShine: () => HolographicShine,
   ScrollGenerateCard: () => ScrollGenerateCard,
+  ShiftCard: () => ShiftCard,
   TiltCard: () => TiltCard
 });
 module.exports = __toCommonJS(index_exports);
 
-// src/components/TiltCard.tsx
-var import_react = require("react");
+// src/components/ShiftCard.tsx
 var import_framer_motion = require("framer-motion");
 var import_jsx_runtime = require("react/jsx-runtime");
+function ShiftCard({ children, className = "", blur = 12, style, ...props }) {
+  return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
+    import_framer_motion.motion.div,
+    {
+      className: `shift-card ${className}`,
+      style: {
+        backdropFilter: `blur(${blur}px)`,
+        WebkitBackdropFilter: `blur(${blur}px)`,
+        ...style
+      },
+      ...props,
+      children
+    }
+  );
+}
+
+// src/components/TiltCard.tsx
+var import_react = require("react");
+var import_framer_motion2 = require("framer-motion");
+var import_jsx_runtime2 = require("react/jsx-runtime");
 function TiltCard({
   children,
   stiffness = 300,
@@ -50,13 +70,13 @@ function TiltCard({
   ...rest
 }) {
   const ref = (0, import_react.useRef)(null);
-  const rawX = (0, import_framer_motion.useMotionValue)(0);
-  const rawY = (0, import_framer_motion.useMotionValue)(0);
-  const rotateY = (0, import_framer_motion.useSpring)((0, import_framer_motion.useTransform)(rawX, [-1, 1], [-maxRotateY, maxRotateY]), {
+  const rawX = (0, import_framer_motion2.useMotionValue)(0);
+  const rawY = (0, import_framer_motion2.useMotionValue)(0);
+  const rotateY = (0, import_framer_motion2.useSpring)((0, import_framer_motion2.useTransform)(rawX, [-1, 1], [-maxRotateY, maxRotateY]), {
     stiffness,
     damping
   });
-  const rotateX = (0, import_framer_motion.useSpring)((0, import_framer_motion.useTransform)(rawY, [-1, 1], [maxRotateX, -maxRotateX]), {
+  const rotateX = (0, import_framer_motion2.useSpring)((0, import_framer_motion2.useTransform)(rawY, [-1, 1], [maxRotateX, -maxRotateX]), {
     stiffness,
     damping
   });
@@ -71,8 +91,8 @@ function TiltCard({
     rawX.set(0);
     rawY.set(0);
   }
-  return /* @__PURE__ */ (0, import_jsx_runtime.jsx)(
-    import_framer_motion.motion.div,
+  return /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
+    import_framer_motion2.motion.div,
     {
       ref,
       onMouseMove,
@@ -86,8 +106,8 @@ function TiltCard({
 
 // src/components/HolographicShine.tsx
 var import_react2 = require("react");
-var import_framer_motion2 = require("framer-motion");
-var import_jsx_runtime2 = require("react/jsx-runtime");
+var import_framer_motion3 = require("framer-motion");
+var import_jsx_runtime3 = require("react/jsx-runtime");
 function HolographicShine({
   rgb = "255,255,255",
   intensity = 0.18,
@@ -96,18 +116,18 @@ function HolographicShine({
   style
 }) {
   const ref = (0, import_react2.useRef)(null);
-  const mouseX = (0, import_framer_motion2.useMotionValue)(0);
-  const mouseY = (0, import_framer_motion2.useMotionValue)(0);
-  const springX = (0, import_framer_motion2.useSpring)(mouseX, { stiffness: 260, damping: 26 });
-  const springY = (0, import_framer_motion2.useSpring)(mouseY, { stiffness: 260, damping: 26 });
-  const background = import_framer_motion2.useMotionTemplate`radial-gradient(260px circle at ${springX}px ${springY}px, rgba(${rgb},${intensity}), transparent 70%)`;
+  const mouseX = (0, import_framer_motion3.useMotionValue)(0);
+  const mouseY = (0, import_framer_motion3.useMotionValue)(0);
+  const springX = (0, import_framer_motion3.useSpring)(mouseX, { stiffness: 260, damping: 26 });
+  const springY = (0, import_framer_motion3.useSpring)(mouseY, { stiffness: 260, damping: 26 });
+  const background = import_framer_motion3.useMotionTemplate`radial-gradient(260px circle at ${springX}px ${springY}px, rgba(${rgb},${intensity}), transparent 70%)`;
   function onMouseMove(e) {
     const rect = ref.current?.getBoundingClientRect();
     if (!rect) return;
     mouseX.set(e.clientX - rect.left);
     mouseY.set(e.clientY - rect.top);
   }
-  return /* @__PURE__ */ (0, import_jsx_runtime2.jsxs)(
+  return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
     "div",
     {
       ref,
@@ -116,8 +136,8 @@ function HolographicShine({
       style: { position: "relative", ...style },
       children: [
         children,
-        /* @__PURE__ */ (0, import_jsx_runtime2.jsx)(
-          import_framer_motion2.motion.div,
+        /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+          import_framer_motion3.motion.div,
           {
             style: {
               position: "absolute",
@@ -135,8 +155,8 @@ function HolographicShine({
 
 // src/components/ScrollGenerateCard.tsx
 var import_react3 = __toESM(require("react"), 1);
-var import_framer_motion3 = require("framer-motion");
-var import_jsx_runtime3 = require("react/jsx-runtime");
+var import_framer_motion4 = require("framer-motion");
+var import_jsx_runtime4 = require("react/jsx-runtime");
 var DEFAULT_WIDTHS = [72, 85, 60, 80];
 function ScrollGenerateCard({
   children,
@@ -148,7 +168,7 @@ function ScrollGenerateCard({
   skeletonWidths = DEFAULT_WIDTHS
 }) {
   const ref = import_react3.default.useRef(null);
-  const inView = (0, import_framer_motion3.useInView)(ref, { once: true, margin });
+  const inView = (0, import_framer_motion4.useInView)(ref, { once: true, margin });
   const [phase, setPhase] = (0, import_react3.useState)("idle");
   (0, import_react3.useEffect)(() => {
     if (!inView) return;
@@ -160,9 +180,9 @@ function ScrollGenerateCard({
     };
   }, [inView, delay, skeletonDuration]);
   const widths = skeletonWidths.slice(0, skeletonRows);
-  return /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)("div", { ref, className, style: { position: "relative" }, children: [
-    phase === "skeleton" && /* @__PURE__ */ (0, import_jsx_runtime3.jsxs)(
-      import_framer_motion3.motion.div,
+  return /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)("div", { ref, className, style: { position: "relative" }, children: [
+    phase === "skeleton" && /* @__PURE__ */ (0, import_jsx_runtime4.jsxs)(
+      import_framer_motion4.motion.div,
       {
         initial: { opacity: 0 },
         animate: { opacity: 1 },
@@ -178,8 +198,8 @@ function ScrollGenerateCard({
           overflow: "hidden"
         },
         children: [
-          /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
-            import_framer_motion3.motion.div,
+          /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
+            import_framer_motion4.motion.div,
             {
               animate: { x: ["-100%", "200%"] },
               transition: { duration: 1.1, repeat: Infinity, ease: "linear" },
@@ -191,7 +211,7 @@ function ScrollGenerateCard({
               }
             }
           ),
-          widths.map((w, i) => /* @__PURE__ */ (0, import_jsx_runtime3.jsx)(
+          widths.map((w, i) => /* @__PURE__ */ (0, import_jsx_runtime4.jsx)(
             "div",
             {
               style: {
@@ -209,12 +229,13 @@ function ScrollGenerateCard({
       }
     ),
     phase === "live" && children(phase),
-    phase === "idle" && /* @__PURE__ */ (0, import_jsx_runtime3.jsx)("div", { style: { visibility: "hidden" }, children: children("idle") })
+    phase === "idle" && /* @__PURE__ */ (0, import_jsx_runtime4.jsx)("div", { style: { visibility: "hidden" }, children: children("idle") })
   ] });
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   HolographicShine,
   ScrollGenerateCard,
+  ShiftCard,
   TiltCard
 });

@@ -1,7 +1,16 @@
-import React from 'react';
+import * as React from 'react';
+import React__default, { ReactNode, CSSProperties } from 'react';
 import { MotionProps } from 'framer-motion';
 
-interface TiltCardProps extends Omit<React.HTMLAttributes<HTMLDivElement>, keyof MotionProps>, MotionProps {
+interface ShiftCardProps extends MotionProps {
+    children: ReactNode;
+    className?: string;
+    style?: CSSProperties;
+    blur?: number;
+}
+declare function ShiftCard({ children, className, blur, style, ...props }: ShiftCardProps): React.JSX.Element;
+
+interface TiltCardProps extends Omit<React__default.HTMLAttributes<HTMLDivElement>, keyof MotionProps>, MotionProps {
     /** Spring stiffness for the tilt. Default 300. */
     stiffness?: number;
     /** Spring damping. Default 28. */
@@ -15,22 +24,22 @@ interface TiltCardProps extends Omit<React.HTMLAttributes<HTMLDivElement>, keyof
  * Drop-in wrapper that adds physics-spring 3-D tilt on mouse move.
  * Renders a `motion.div`; all extra props forwarded.
  */
-declare function TiltCard({ children, stiffness, damping, maxRotateX, maxRotateY, style, ...rest }: TiltCardProps): React.JSX.Element;
+declare function TiltCard({ children, stiffness, damping, maxRotateX, maxRotateY, style, ...rest }: TiltCardProps): React__default.JSX.Element;
 
 interface HolographicShineProps {
     /** RGB triplet for the shine tint, e.g. "0,229,240". Default neutral white. */
     rgb?: string;
     /** Intensity 0–1 of the shine overlay. Default 0.18. */
     intensity?: number;
-    children?: React.ReactNode;
+    children?: React__default.ReactNode;
     className?: string;
-    style?: React.CSSProperties;
+    style?: React__default.CSSProperties;
 }
 /**
  * Wrapper that paints a cursor-tracked radial holographic shine over its
  * children. Combine with TiltCard for the full effect.
  */
-declare function HolographicShine({ rgb, intensity, children, className, style, }: HolographicShineProps): React.JSX.Element;
+declare function HolographicShine({ rgb, intensity, children, className, style, }: HolographicShineProps): React__default.JSX.Element;
 
 type Phase = "idle" | "skeleton" | "live";
 interface ScrollGenerateCardProps {
@@ -38,7 +47,7 @@ interface ScrollGenerateCardProps {
      * The real card content. Rendered in the "live" phase.
      * Passed the current phase so content can animate itself in.
      */
-    children: (phase: Phase) => React.ReactNode;
+    children: (phase: Phase) => React__default.ReactNode;
     /**
      * Milliseconds of skeleton phase before switching to live. Default 360.
      */
@@ -68,6 +77,6 @@ interface ScrollGenerateCardProps {
  * </ScrollGenerateCard>
  * ```
  */
-declare function ScrollGenerateCard({ children, skeletonDuration, delay, margin, className, skeletonRows, skeletonWidths, }: ScrollGenerateCardProps): React.JSX.Element;
+declare function ScrollGenerateCard({ children, skeletonDuration, delay, margin, className, skeletonRows, skeletonWidths, }: ScrollGenerateCardProps): React__default.JSX.Element;
 
-export { HolographicShine, type HolographicShineProps, ScrollGenerateCard, type ScrollGenerateCardProps, TiltCard, type TiltCardProps };
+export { HolographicShine, type HolographicShineProps, ScrollGenerateCard, type ScrollGenerateCardProps, ShiftCard, type ShiftCardProps, TiltCard, type TiltCardProps };
