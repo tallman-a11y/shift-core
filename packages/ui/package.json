@@ -1,6 +1,6 @@
 {
   "name": "@allshift/ui",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Shift family shared FEEL layer — glass morphism, 3D tilt physics, holographic shine, scroll-triggered generation, and the living-canvas engine (LiveCard, LiveStat, CanvasTransition, CanvasLauncher). Brand-neutral by design.",
   "license": "UNLICENSED",
   "private": false,

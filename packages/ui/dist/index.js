@@ -510,7 +510,8 @@ function CanvasTransition({
   children,
   labels = {},
   seenKey = "ash-seen-views",
-  assemblerName = "Shift"
+  assemblerName = "Shift",
+  alwaysGenerate = false
 }) {
   const pathname = usePathname();
   const [mounted, setMounted] = useState4(false);
@@ -529,10 +530,10 @@ function CanvasTransition({
     }
     setMounted(true);
   }, []);
-  const firstVisit = mounted && !seen.has(pathname);
+  const firstVisit = mounted && (alwaysGenerate || !seen.has(pathname));
   useEffect4(() => {
     if (!mounted) return;
-    const wasFirst = !seen.has(pathname);
+    const wasFirst = alwaysGenerate || !seen.has(pathname);
     seen.add(pathname);
     try {
       sessionStorage.setItem(seenKey, JSON.stringify([...seen]));

@@ -30,6 +30,10 @@ export interface CanvasTransitionProps {
   seenKey?: string;
   /** Product name shown in the pill, e.g. "Shift is assembling …". Default "Shift". */
   assemblerName?: string;
+  /** Treat every navigation as a first visit — always play the full generate-in
+   *  (blur→lift + assembling sheen). Use for demos/tours so each view visibly
+   *  assembles onto the canvas every time. Default false. */
+  alwaysGenerate?: boolean;
 }
 
 export function CanvasTransition({
@@ -37,6 +41,7 @@ export function CanvasTransition({
   labels = {},
   seenKey = "ash-seen-views",
   assemblerName = "Shift",
+  alwaysGenerate = false,
 }: CanvasTransitionProps) {
   const pathname = usePathname();
   const [mounted, setMounted] = useState(false);
@@ -64,11 +69,11 @@ export function CanvasTransition({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const firstVisit = mounted && !seen.has(pathname);
+  const firstVisit = mounted && (alwaysGenerate || !seen.has(pathname));
 
   useEffect(() => {
     if (!mounted) return;
-    const wasFirst = !seen.has(pathname);
+    const wasFirst = alwaysGenerate || !seen.has(pathname);
     seen.add(pathname);
     try {
       sessionStorage.setItem(seenKey, JSON.stringify([...seen]));

@@ -207,8 +207,12 @@ interface CanvasTransitionProps {
     seenKey?: string;
     /** Product name shown in the pill, e.g. "Shift is assembling …". Default "Shift". */
     assemblerName?: string;
+    /** Treat every navigation as a first visit — always play the full generate-in
+     *  (blur→lift + assembling sheen). Use for demos/tours so each view visibly
+     *  assembles onto the canvas every time. Default false. */
+    alwaysGenerate?: boolean;
 }
-declare function CanvasTransition({ children, labels, seenKey, assemblerName, }: CanvasTransitionProps): react.JSX.Element;
+declare function CanvasTransition({ children, labels, seenKey, assemblerName, alwaysGenerate, }: CanvasTransitionProps): react.JSX.Element;
 
 interface LauncherItem {
     href: string;

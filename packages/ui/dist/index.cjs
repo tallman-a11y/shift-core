@@ -541,7 +541,8 @@ function CanvasTransition({
   children,
   labels = {},
   seenKey = "ash-seen-views",
-  assemblerName = "Shift"
+  assemblerName = "Shift",
+  alwaysGenerate = false
 }) {
   const pathname = (0, import_navigation.usePathname)();
   const [mounted, setMounted] = (0, import_react7.useState)(false);
@@ -560,10 +561,10 @@ function CanvasTransition({
     }
     setMounted(true);
   }, []);
-  const firstVisit = mounted && !seen.has(pathname);
+  const firstVisit = mounted && (alwaysGenerate || !seen.has(pathname));
   (0, import_react7.useEffect)(() => {
     if (!mounted) return;
-    const wasFirst = !seen.has(pathname);
+    const wasFirst = alwaysGenerate || !seen.has(pathname);
     seen.add(pathname);
     try {
       sessionStorage.setItem(seenKey, JSON.stringify([...seen]));
