@@ -1,3 +1,5 @@
+"use client";
+
 // src/components/ShiftCard.tsx
 import { motion } from "framer-motion";
 import { jsx } from "react/jsx-runtime";
