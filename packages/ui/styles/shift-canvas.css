@@ -1,0 +1,67 @@
+/* ============================================================================
+   @allshift/ui — living-canvas engine styles.
+   ----------------------------------------------------------------------------
+   The surface + motion layer for the "one living canvas" model (LiveCard,
+   LiveStat, CanvasTransition, CanvasLauncher, GenerativeView). BRAND-NEUTRAL:
+   the surface is driven by the --shift-* token contract, accents are decorative
+   rgb constants set inline by the components, and the assembling indicator uses
+   the product's --shift-accent.
+
+   Import once in the app's global CSS, AFTER @allshift/ui/styles.css:
+     @import "@allshift/ui/canvas.css";
+
+   `.ash-surface` is intentionally namespaced so it NEVER collides with a
+   product's own `.glass`.
+   ========================================================================== */
+
+:where(:root) {
+  /* Optional: products may set this so accent="brand" surfaces glow on-brand.
+     "R,G,B" triplet matching --shift-accent. Falls back to a neutral blue. */
+  --shift-accent-rgb: 91, 140, 255;
+}
+
+/* ---- The canvas surface: cushioned glass, themed by --shift-* tokens. ---- */
+.ash-surface {
+  background: linear-gradient(158deg, var(--shift-surface, rgba(22, 28, 38, 0.92)) 0%, var(--shift-surface-2, rgba(12, 16, 24, 0.94)) 100%);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+          backdrop-filter: blur(24px) saturate(1.4);
+  border: 1px solid var(--shift-border, rgba(255, 255, 255, 0.10));
+  box-shadow:
+    0 8px 48px var(--shift-shadow, rgba(0, 0, 0, 0.66)),
+    inset 0 1px 0 var(--shift-highlight, rgba(255, 255, 255, 0.14)),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.45);
+}
+
+/* ---- Generate-in: blur→lift used by GenerativeView fallbacks + utilities. ---- */
+@keyframes ash-gen-in {
+  from { opacity: 0; transform: translateY(14px); filter: blur(6px); }
+  to   { opacity: 1; transform: translateY(0);    filter: blur(0); }
+}
+.ash-gen-in   { animation: ash-gen-in 0.4s ease both; }
+.ash-gen-in-1 { animation: ash-gen-in 0.4s ease both 0.05s; }
+.ash-gen-in-2 { animation: ash-gen-in 0.4s ease both 0.10s; }
+.ash-gen-in-3 { animation: ash-gen-in 0.4s ease both 0.15s; }
+.ash-gen-in-4 { animation: ash-gen-in 0.4s ease both 0.20s; }
+.ash-gen-in-5 { animation: ash-gen-in 0.4s ease both 0.25s; }
+
+/* ---- Shimmer sweep (loading) — for non-framer skeleton surfaces. ---- */
+@keyframes ash-shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+.ash-shimmer {
+  background: linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.05) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: ash-shimmer 1.6s ease-in-out infinite;
+}
+
+/* ---- Data pulse — a card briefly rings when its data updates. ---- */
+@keyframes ash-data-pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--shift-accent, #5b8cff) 35%, transparent); }
+  70%  { box-shadow: 0 0 0 8px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.ash-data-pulse { animation: ash-data-pulse 1.6s ease-out; }
+
+/* ---- Accessibility: honor reduced-motion. ---- */
+@media (prefers-reduced-motion: reduce) {
+  .ash-gen-in, .ash-gen-in-1, .ash-gen-in-2, .ash-gen-in-3, .ash-gen-in-4, .ash-gen-in-5,
+  .ash-shimmer, .ash-data-pulse { animation: none; }
+}

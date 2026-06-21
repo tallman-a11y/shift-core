@@ -10,3 +10,7 @@ export type { HolographicShineProps } from "./components/HolographicShine";
 
 export { ScrollGenerateCard } from "./components/ScrollGenerateCard";
 export type { ScrollGenerateCardProps } from "./components/ScrollGenerateCard";
+
+// Living-canvas engine — the "one living canvas" model.
+// Styles: import "@allshift/ui/canvas.css" once in your global CSS.
+export * from "./canvas";

@@ -7,5 +7,5 @@ export default defineConfig({
   splitting: false,
   sourcemap: false,
   clean: true,
-  external: ["react", "react-dom", "framer-motion"],
+  external: ["react", "react-dom", "framer-motion", "lucide-react", "next", "next/navigation"],
 });
