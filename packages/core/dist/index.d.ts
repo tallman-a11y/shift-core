@@ -1,3 +1,70 @@
+interface CrossProductEvent {
+    id: string;
+    sourceProduct: string;
+    eventType: string;
+    userId: string;
+    payload: Record<string, unknown>;
+    consumed: boolean;
+    createdAt: string;
+}
+interface CrossProductIdentity {
+    globalUserId: string;
+    productAccounts: Record<string, string>;
+    consentedProducts: string[];
+}
+interface ContextGraph {
+    publish(event: Omit<CrossProductEvent, 'id' | 'createdAt' | 'consumed'>): Promise<string>;
+    getPendingEvents(targetProduct: string, userId: string): Promise<CrossProductEvent[]>;
+    markConsumed(eventIds: string[]): Promise<void>;
+    resolveIdentity(product: string, localUserId: string): Promise<CrossProductIdentity | null>;
+    linkIdentity(globalUserId: string, product: string, localUserId: string, consentedProducts: string[]): Promise<void>;
+}
+declare class NoOpContextGraph implements ContextGraph {
+    publish(): Promise<string>;
+    getPendingEvents(): Promise<CrossProductEvent[]>;
+    markConsumed(): Promise<void>;
+    resolveIdentity(): Promise<null>;
+    linkIdentity(): Promise<void>;
+}
+declare function formatCrossProductContextForPrompt(events: CrossProductEvent[]): string;
+
+type FeedbackSignal = 'accept' | 'edit' | 'reject';
+interface FeedbackEntry {
+    id?: string;
+    userId: string;
+    messageId?: string;
+    signal: FeedbackSignal;
+    originalText: string;
+    editedText?: string;
+    userMessage?: string;
+    domain?: string;
+    metadata?: Record<string, unknown>;
+    createdAt?: string;
+}
+interface OutcomeRecord {
+    id?: string;
+    userId: string;
+    predictionType: string;
+    predictionId: string;
+    predictedValue: unknown;
+    actualValue?: unknown;
+    resolvedAt?: string;
+    domain?: string;
+}
+interface UserPreferences {
+    responseStyle: 'concise' | 'detailed' | 'standard';
+    acceptanceRate: number;
+    topAcceptedDomains: string[];
+    avoidNotes: string[];
+    customInstructions: string;
+}
+interface LearningStore {
+    recordFeedback(entry: FeedbackEntry): Promise<string | null>;
+    recordOutcome(record: OutcomeRecord): Promise<void>;
+    getPreferences(userId: string, domain?: string): Promise<UserPreferences | null>;
+}
+declare function formatPreferencesForPrompt(prefs: UserPreferences, domain?: string): string;
+
 type MemoryType = 'decision' | 'preference' | 'context' | 'correction' | 'general' | (string & {});
 type MemorySource = 'conversation' | 'explicit' | 'correction' | 'onboarding' | 'system' | (string & {});
 interface MemoryEntry {
@@ -87,16 +154,22 @@ interface BrainConfig {
     memory?: MemoryStore;
     knowledge?: KnowledgeStore;
     tools?: ShiftTool[];
+    learning?: LearningStore;
+    contextGraph?: ContextGraph;
+    product?: string;
 }
 interface ThinkOpts {
     userId: string;
     message: string;
     history?: ConversationTurn[];
+    messageId?: string;
 }
 interface ThinkResult {
     text: string;
     toolsInvoked: string[];
     memoryRecorded: boolean;
+    preferencesApplied: boolean;
+    crossProductEventsConsumed: number;
 }
 
 declare const EMBED_DIM = 1024;
@@ -160,7 +233,8 @@ declare function definePersona(persona: ShiftPersona): ShiftPersona;
  *
  * Products instantiate one brain at module scope, wiring in their own
  * storage implementations (MemoryStore, KnowledgeStore) and domain tools.
- * The brain handles: memory recall → prompt assembly → tool loop → response.
+ * The brain handles: memory recall → preferences → cross-product context →
+ * prompt assembly → tool loop → response.
  *
  * Example (LendShift):
  * ```ts
@@ -170,6 +244,9 @@ declare function definePersona(persona: ShiftPersona): ShiftPersona;
  *   embedding: new VoyageEmbeddingProvider(process.env.VOYAGE_API_KEY),
  *   memory: new SupabaseMemoryStore(supabase),
  *   tools: [leadScoringTool, calendarTool],
+ *   learning: new SupabaseLearningStore(supabase),
+ *   contextGraph: new SupabaseContextGraph(supabase),
+ *   product: 'lendshift',
  * });
  * ```
  */
@@ -184,10 +261,21 @@ declare class ShiftBrain {
     remember(userId: string, content: string, type?: string): Promise<void>;
     /** Retrieve memories relevant to a query. */
     recall(userId: string, query: string): Promise<MemoryEntry[]>;
+    /**
+     * Record user feedback on a Shift response.
+     * Use this to feed the learning engine so preferences are updated over time.
+     */
+    feedback(userId: string, signal: FeedbackSignal, originalText: string, editedText?: string, userMessage?: string, messageId?: string): Promise<void>;
+    /**
+     * Track the outcome of a prediction.
+     * Call with actualValue once the outcome is known; omit it when creating
+     * the initial prediction record.
+     */
+    trackOutcome(userId: string, predictionType: string, predictionId: string, predictedValue: unknown, actualValue?: unknown): Promise<void>;
     /** Stream a response. Returns an async iterable of text deltas. */
     stream(opts: ThinkOpts): AsyncIterable<string>;
     /** Register an additional tool at runtime. */
     addTool(tool: Parameters<ToolRegistry['register']>[0]): void;
 }
 
-export { type BrainConfig, type ConversationTurn, EMBED_DIM, type EmbedInputType, type EmbeddingProvider, type KnowledgeChunk, type KnowledgeStore, type MemoryEntry, type MemorySource, type MemoryStore, type MemoryType, type RecordMemoryOpts, type RecordResult, type RetrieveOpts, ShiftBrain, type ShiftPersona, type ShiftTool, type ThinkOpts, type ThinkResult, type ToolContext, type ToolInputSchema, ToolRegistry, VoyageEmbeddingProvider, buildSystemPrompt, definePersona, formatMemoriesForPrompt, recordMemory, retrieveRelevantMemories };
+export { type BrainConfig, type ContextGraph, type ConversationTurn, type CrossProductEvent, type CrossProductIdentity, EMBED_DIM, type EmbedInputType, type EmbeddingProvider, type FeedbackEntry, type FeedbackSignal, type KnowledgeChunk, type KnowledgeStore, type LearningStore, type MemoryEntry, type MemorySource, type MemoryStore, type MemoryType, NoOpContextGraph, type OutcomeRecord, type RecordMemoryOpts, type RecordResult, type RetrieveOpts, ShiftBrain, type ShiftPersona, type ShiftTool, type ThinkOpts, type ThinkResult, type ToolContext, type ToolInputSchema, ToolRegistry, type UserPreferences, VoyageEmbeddingProvider, buildSystemPrompt, definePersona, formatCrossProductContextForPrompt, formatMemoriesForPrompt, formatPreferencesForPrompt, recordMemory, retrieveRelevantMemories };

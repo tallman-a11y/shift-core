@@ -14,3 +14,7 @@ export type { ScrollGenerateCardProps } from "./components/ScrollGenerateCard";
 // Living-canvas engine — the "one living canvas" model.
 // Styles: import "@allshift/ui/canvas.css" once in your global CSS.
 export * from "./canvas";
+
+// Voice / Hey Shift pipeline
+export { useHeyShift, ShiftBar } from './voice/index.js';
+export type { ShiftBarState, HeyShiftConfig, HeyShiftReturn, ShiftBarProps } from './voice/index.js';

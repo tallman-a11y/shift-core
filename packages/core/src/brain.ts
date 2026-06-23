@@ -2,6 +2,9 @@ import Anthropic from '@anthropic-ai/sdk';
 import { buildSystemPrompt } from './persona.js';
 import { recordMemory, retrieveRelevantMemories, formatMemoriesForPrompt } from './memory.js';
 import { ToolRegistry } from './tools.js';
+import { formatPreferencesForPrompt } from './learning.js';
+import type { FeedbackSignal, FeedbackEntry, OutcomeRecord } from './learning.js';
+import { formatCrossProductContextForPrompt } from './graph.js';
 import type {
   BrainConfig,
   ThinkOpts,
@@ -18,7 +21,8 @@ const DEFAULT_MAX_TOKENS = 1024;
  *
  * Products instantiate one brain at module scope, wiring in their own
  * storage implementations (MemoryStore, KnowledgeStore) and domain tools.
- * The brain handles: memory recall → prompt assembly → tool loop → response.
+ * The brain handles: memory recall → preferences → cross-product context →
+ * prompt assembly → tool loop → response.
  *
  * Example (LendShift):
  * ```ts
@@ -28,6 +32,9 @@ const DEFAULT_MAX_TOKENS = 1024;
  *   embedding: new VoyageEmbeddingProvider(process.env.VOYAGE_API_KEY),
  *   memory: new SupabaseMemoryStore(supabase),
  *   tools: [leadScoringTool, calendarTool],
+ *   learning: new SupabaseLearningStore(supabase),
+ *   contextGraph: new SupabaseContextGraph(supabase),
+ *   product: 'lendshift',
  * });
  * ```
  */
@@ -47,8 +54,8 @@ export class ShiftBrain {
 
   /** Main entry point: think through a user message and return a response. */
   async think(opts: ThinkOpts): Promise<ThinkResult> {
-    const { userId, message, history = [] } = opts;
-    const { persona, embedding, memory, knowledge, model, maxTokens } = this.config;
+    const { userId, message, history = [], messageId } = opts;
+    const { persona, embedding, memory, knowledge, model, maxTokens, learning, contextGraph, product } = this.config;
 
     // 1. Recall relevant memories.
     let memories: MemoryEntry[] = [];
@@ -61,17 +68,32 @@ export class ShiftBrain {
       });
     }
 
-    // 2. Build system prompt with memory block.
-    const memoryBlock = formatMemoriesForPrompt(memories, persona.domain);
-    const systemPrompt = buildSystemPrompt(persona, memoryBlock);
+    // 2. Fetch cross-product events.
+    let pendingEvents: import('./graph.js').CrossProductEvent[] = [];
+    if (contextGraph) {
+      pendingEvents = await contextGraph.getPendingEvents(product ?? 'unknown', userId);
+    }
 
-    // 3. Build messages array.
+    // 3. Fetch learned preferences.
+    let prefs: import('./learning.js').UserPreferences | null = null;
+    if (learning) {
+      prefs = await learning.getPreferences(userId, product);
+    }
+
+    // 4. Build system prompt with all context blocks.
+    const memoryBlock = formatMemoriesForPrompt(memories, persona.domain);
+    const prefsBlock = prefs ? formatPreferencesForPrompt(prefs, product) : '';
+    const crossProductBlock = formatCrossProductContextForPrompt(pendingEvents);
+    const combinedContextBlock = memoryBlock + prefsBlock + crossProductBlock;
+    const systemPrompt = buildSystemPrompt(persona, combinedContextBlock);
+
+    // 5. Build messages array.
     const messages: Anthropic.Messages.MessageParam[] = [
       ...history.map((t) => ({ role: t.role, content: t.content } as Anthropic.Messages.MessageParam)),
       { role: 'user', content: message },
     ];
 
-    // 4. Agentic tool loop.
+    // 6. Agentic tool loop.
     const toolsInvoked: string[] = [];
     let responseText = '';
 
@@ -129,7 +151,12 @@ export class ShiftBrain {
       ];
     }
 
-    // 5. Passively record assistant response as a context memory.
+    // 7. Mark cross-product events as consumed.
+    if (contextGraph && pendingEvents.length > 0) {
+      await contextGraph.markConsumed(pendingEvents.map(e => e.id));
+    }
+
+    // 8. Passively record assistant response as a context memory.
     let memoryRecorded = false;
     if (memory && responseText) {
       const { id } = await recordMemory(memory, embedding, {
@@ -143,7 +170,13 @@ export class ShiftBrain {
       memoryRecorded = !!id;
     }
 
-    return { text: responseText, toolsInvoked, memoryRecorded };
+    return {
+      text: responseText,
+      toolsInvoked,
+      memoryRecorded,
+      preferencesApplied: !!prefs,
+      crossProductEventsConsumed: pendingEvents.length,
+    };
   }
 
   /** Explicitly save a memory (e.g. user says "remember that…"). */
@@ -169,11 +202,62 @@ export class ShiftBrain {
     });
   }
 
+  /**
+   * Record user feedback on a Shift response.
+   * Use this to feed the learning engine so preferences are updated over time.
+   */
+  async feedback(
+    userId: string,
+    signal: FeedbackSignal,
+    originalText: string,
+    editedText?: string,
+    userMessage?: string,
+    messageId?: string,
+  ): Promise<void> {
+    if (!this.config.learning) return;
+    const entry: FeedbackEntry = {
+      userId,
+      signal,
+      originalText,
+      editedText,
+      userMessage,
+      messageId,
+      domain: this.config.product,
+    };
+    await this.config.learning.recordFeedback(entry);
+  }
+
+  /**
+   * Track the outcome of a prediction.
+   * Call with actualValue once the outcome is known; omit it when creating
+   * the initial prediction record.
+   */
+  async trackOutcome(
+    userId: string,
+    predictionType: string,
+    predictionId: string,
+    predictedValue: unknown,
+    actualValue?: unknown,
+  ): Promise<void> {
+    if (!this.config.learning) return;
+    const record: OutcomeRecord = {
+      userId,
+      predictionType,
+      predictionId,
+      predictedValue,
+      actualValue,
+      domain: this.config.product,
+      resolvedAt: actualValue !== undefined ? new Date().toISOString() : undefined,
+    };
+    await this.config.learning.recordOutcome(record);
+  }
+
   /** Stream a response. Returns an async iterable of text deltas. */
   async *stream(opts: ThinkOpts): AsyncIterable<string> {
     const { userId, message, history = [] } = opts;
-    const { persona, embedding, memory, model, maxTokens } = this.config;
+    const { persona, embedding, memory, model, maxTokens, learning, contextGraph, product } = this.config;
 
+    // 1. Recall relevant memories.
     let memories: MemoryEntry[] = [];
     if (memory) {
       memories = await retrieveRelevantMemories(memory, embedding, {
@@ -181,15 +265,35 @@ export class ShiftBrain {
       });
     }
 
-    const systemPrompt = buildSystemPrompt(
-      persona,
-      formatMemoriesForPrompt(memories, persona.domain),
-    );
+    // 2. Fetch cross-product events.
+    let pendingEvents: import('./graph.js').CrossProductEvent[] = [];
+    if (contextGraph) {
+      pendingEvents = await contextGraph.getPendingEvents(product ?? 'unknown', userId);
+    }
+
+    // 3. Fetch learned preferences.
+    let prefs: import('./learning.js').UserPreferences | null = null;
+    if (learning) {
+      prefs = await learning.getPreferences(userId, product);
+    }
+
+    // 4. Build system prompt with all context blocks.
+    const memoryBlock = formatMemoriesForPrompt(memories, persona.domain);
+    const prefsBlock = prefs ? formatPreferencesForPrompt(prefs, product) : '';
+    const crossProductBlock = formatCrossProductContextForPrompt(pendingEvents);
+    const combinedContextBlock = memoryBlock + prefsBlock + crossProductBlock;
+
+    const systemPrompt = buildSystemPrompt(persona, combinedContextBlock);
 
     const messages: Anthropic.Messages.MessageParam[] = [
       ...history.map((t) => ({ role: t.role, content: t.content } as Anthropic.Messages.MessageParam)),
       { role: 'user', content: message },
     ];
+
+    // 5. Mark cross-product events as consumed before streaming starts.
+    if (contextGraph && pendingEvents.length > 0) {
+      await contextGraph.markConsumed(pendingEvents.map(e => e.id));
+    }
 
     const stream = this.client.messages.stream({
       model: model ?? DEFAULT_MODEL,

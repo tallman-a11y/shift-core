@@ -116,16 +116,22 @@ export interface BrainConfig {
   memory?: MemoryStore;
   knowledge?: KnowledgeStore;
   tools?: ShiftTool[];
+  learning?: import('./learning.js').LearningStore;
+  contextGraph?: import('./graph.js').ContextGraph;
+  product?: string; // e.g. 'lendshift', 'realshift'
 }
 
 export interface ThinkOpts {
   userId: string;
   message: string;
   history?: ConversationTurn[];
+  messageId?: string;
 }
 
 export interface ThinkResult {
   text: string;
   toolsInvoked: string[];
   memoryRecorded: boolean;
+  preferencesApplied: boolean;
+  crossProductEventsConsumed: number;
 }

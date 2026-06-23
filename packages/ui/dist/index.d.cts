@@ -263,4 +263,33 @@ interface PageTransitionProps {
  */
 declare function PageTransition({ children, className }: PageTransitionProps): react.JSX.Element;
 
-export { ACCENT_RGB, type Accent, CanvasLauncher, type CanvasLauncherProps, CanvasTransition, type CanvasTransitionProps, type GenPhase, GenerativeView, type GenerativeViewProps, HolographicShine, type HolographicShineProps, type LauncherGroup, type LauncherItem, LiveCard, type LiveCardProps, LiveStat, type LiveStatProps, PageTransition, type PageTransitionProps, ScrollGenerateCard, type ScrollGenerateCardProps, ShiftCard, type ShiftCardProps, TiltCard, type TiltCardProps, type UseGenerateOptions, useGenerate };
+type ShiftBarState = 'idle' | 'wake' | 'listening' | 'thinking' | 'speaking' | 'error';
+interface HeyShiftConfig {
+    wakeWord?: string;
+    language?: string;
+    silenceMs?: number;
+    onCommand?: (text: string) => Promise<string | void>;
+    onStateChange?: (state: ShiftBarState) => void;
+}
+interface HeyShiftReturn {
+    state: ShiftBarState;
+    transcript: string;
+    startListening: () => void;
+    stopListening: () => void;
+    speak: (text: string) => Promise<void>;
+    cancelSpeech: () => void;
+    isSupported: boolean;
+}
+declare function useHeyShift(config?: HeyShiftConfig): HeyShiftReturn;
+
+interface ShiftBarProps {
+    state: ShiftBarState;
+    /** Number of dots. Default 3 for wave effect. */
+    dots?: number;
+    /** Dot size in px. Default 7. */
+    size?: number;
+    className?: string;
+}
+declare function ShiftBar({ state, dots, size, className }: ShiftBarProps): react.JSX.Element;
+
+export { ACCENT_RGB, type Accent, CanvasLauncher, type CanvasLauncherProps, CanvasTransition, type CanvasTransitionProps, type GenPhase, GenerativeView, type GenerativeViewProps, type HeyShiftConfig, type HeyShiftReturn, HolographicShine, type HolographicShineProps, type LauncherGroup, type LauncherItem, LiveCard, type LiveCardProps, LiveStat, type LiveStatProps, PageTransition, type PageTransitionProps, ScrollGenerateCard, type ScrollGenerateCardProps, ShiftBar, type ShiftBarProps, type ShiftBarState, ShiftCard, type ShiftCardProps, TiltCard, type TiltCardProps, type UseGenerateOptions, useGenerate, useHeyShift };

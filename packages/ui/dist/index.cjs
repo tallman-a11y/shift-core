@@ -40,9 +40,11 @@ __export(index_exports, {
   LiveStat: () => LiveStat,
   PageTransition: () => PageTransition,
   ScrollGenerateCard: () => ScrollGenerateCard,
+  ShiftBar: () => ShiftBar,
   ShiftCard: () => ShiftCard,
   TiltCard: () => TiltCard,
-  useGenerate: () => useGenerate
+  useGenerate: () => useGenerate,
+  useHeyShift: () => useHeyShift
 });
 module.exports = __toCommonJS(index_exports);
 
@@ -822,6 +824,225 @@ function PageTransition({ children, className }) {
     pathname
   );
 }
+
+// src/voice/useHeyShift.ts
+var import_react10 = require("react");
+function getSpeechRecognitionCtor() {
+  const w = window;
+  return w.SpeechRecognition ?? w.webkitSpeechRecognition;
+}
+function useHeyShift(config = {}) {
+  const {
+    wakeWord = "hey shift",
+    language = "en-US",
+    silenceMs = 1500,
+    onCommand,
+    onStateChange
+  } = config;
+  const [state, setState] = (0, import_react10.useState)("idle");
+  const [transcript, setTranscript] = (0, import_react10.useState)("");
+  const [isSupported, setIsSupported] = (0, import_react10.useState)(false);
+  const recRef = (0, import_react10.useRef)(null);
+  const silenceTimerRef = (0, import_react10.useRef)(null);
+  const activeRef = (0, import_react10.useRef)(false);
+  const accumulatedRef = (0, import_react10.useRef)("");
+  const stateRef = (0, import_react10.useRef)("idle");
+  const updateState = (0, import_react10.useCallback)((s) => {
+    stateRef.current = s;
+    setState(s);
+    onStateChange?.(s);
+  }, [onStateChange]);
+  (0, import_react10.useEffect)(() => {
+    const SR = getSpeechRecognitionCtor();
+    setIsSupported(!!(SR && window.speechSynthesis));
+  }, []);
+  const getVoice = (0, import_react10.useCallback)(() => {
+    const voices = window.speechSynthesis?.getVoices() ?? [];
+    return voices.find((v) => v.name.toLowerCase().includes("will")) ?? voices.find((v) => v.name.toLowerCase().includes("daniel")) ?? voices.find((v) => v.lang.startsWith("en") && v.name.toLowerCase().includes("male")) ?? voices.find((v) => v.lang.startsWith("en")) ?? voices[0] ?? null;
+  }, []);
+  const speak = (0, import_react10.useCallback)(async (text) => {
+    if (!window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+    return new Promise((resolve) => {
+      const utter = new SpeechSynthesisUtterance(text);
+      const setVoiceAndSpeak = () => {
+        const voice = getVoice();
+        if (voice) utter.voice = voice;
+        utter.rate = 1.05;
+        utter.pitch = 0.95;
+        updateState("speaking");
+        utter.onend = () => {
+          updateState("idle");
+          resolve();
+        };
+        utter.onerror = () => {
+          updateState("idle");
+          resolve();
+        };
+        window.speechSynthesis.speak(utter);
+      };
+      if (window.speechSynthesis.getVoices().length > 0) {
+        setVoiceAndSpeak();
+      } else {
+        window.speechSynthesis.onvoiceschanged = () => {
+          setVoiceAndSpeak();
+        };
+      }
+    });
+  }, [getVoice, updateState]);
+  const cancelSpeech = (0, import_react10.useCallback)(() => {
+    window.speechSynthesis?.cancel();
+    if (stateRef.current === "speaking") updateState("idle");
+  }, [updateState]);
+  const resetSilenceTimer = (0, import_react10.useCallback)((text) => {
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    silenceTimerRef.current = setTimeout(async () => {
+      if (!activeRef.current || !text.trim()) return;
+      activeRef.current = false;
+      accumulatedRef.current = "";
+      setTranscript("");
+      updateState("thinking");
+      try {
+        const response = await onCommand?.(text.trim());
+        if (response) {
+          await speak(response);
+        } else {
+          updateState("idle");
+        }
+      } catch {
+        updateState("error");
+        setTimeout(() => updateState("idle"), 2e3);
+      }
+    }, silenceMs);
+  }, [silenceMs, onCommand, speak, updateState]);
+  const startListening = (0, import_react10.useCallback)(() => {
+    const SR = getSpeechRecognitionCtor();
+    if (!SR || recRef.current) return;
+    const rec = new SR();
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = language;
+    rec.onresult = (event) => {
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const t = event.results[i][0].transcript.trim().toLowerCase();
+        const isFinal = event.results[i].isFinal;
+        if (!activeRef.current) {
+          if (t.includes(wakeWord.toLowerCase())) {
+            activeRef.current = true;
+            accumulatedRef.current = "";
+            setTranscript("");
+            updateState("wake");
+            setTimeout(() => {
+              if (activeRef.current) updateState("listening");
+            }, 300);
+          }
+        } else {
+          const raw = event.results[i][0].transcript;
+          if (isFinal) {
+            accumulatedRef.current += " " + raw;
+          }
+          const display = (accumulatedRef.current + " " + (isFinal ? "" : raw)).trim();
+          setTranscript(display);
+          resetSilenceTimer(display);
+        }
+      }
+    };
+    rec.onend = () => {
+      if (recRef.current) {
+        setTimeout(() => {
+          recRef.current?.start();
+        }, 150);
+      }
+    };
+    rec.onerror = (event) => {
+      if (event.error === "no-speech") return;
+      if (event.error === "not-allowed") updateState("error");
+    };
+    rec.start();
+    recRef.current = rec;
+  }, [language, wakeWord, resetSilenceTimer, updateState]);
+  const stopListening = (0, import_react10.useCallback)(() => {
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    const rec = recRef.current;
+    recRef.current = null;
+    rec?.stop();
+    activeRef.current = false;
+    accumulatedRef.current = "";
+    setTranscript("");
+    updateState("idle");
+  }, [updateState]);
+  (0, import_react10.useEffect)(() => {
+    return () => {
+      const rec = recRef.current;
+      recRef.current = null;
+      rec?.stop();
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      window.speechSynthesis?.cancel();
+    };
+  }, []);
+  return { state, transcript, startListening, stopListening, speak, cancelSpeech, isSupported };
+}
+
+// src/voice/ShiftBar.tsx
+var import_jsx_runtime11 = require("react/jsx-runtime");
+var COLORS = {
+  idle: "rgba(255,255,255,0.15)",
+  wake: "#0ed882",
+  listening: "#0ed882",
+  thinking: "#22d3ee",
+  speaking: "#a78bfa",
+  error: "#f87171"
+};
+function ShiftBar({ state, dots = 3, size = 7, className = "" }) {
+  const color = COLORS[state];
+  const isAnimated = state !== "idle" && state !== "error";
+  return /* @__PURE__ */ (0, import_jsx_runtime11.jsxs)(import_jsx_runtime11.Fragment, { children: [
+    /* @__PURE__ */ (0, import_jsx_runtime11.jsx)("style", { children: `
+        @keyframes _sb_pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.35;transform:scale(1.45)} }
+        @keyframes _sb_wave  { 0%,100%{transform:scaleY(1)} 50%{transform:scaleY(1.9)} }
+        @keyframes _sb_spin  { to{transform:rotate(360deg)} }
+      ` }),
+    /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(
+      "span",
+      {
+        className,
+        role: "status",
+        "aria-label": `Shift: ${state}`,
+        style: { display: "inline-flex", alignItems: "center", gap: Math.round(size * 0.6) },
+        children: Array.from({ length: dots }).map((_, i) => {
+          let animation;
+          if (isAnimated) {
+            if (state === "thinking") {
+              animation = `_sb_spin 1s linear infinite`;
+            } else if (state === "speaking") {
+              animation = `_sb_wave .7s ease-in-out ${i * 0.12}s infinite`;
+            } else {
+              animation = `_sb_pulse 1.2s ease-in-out ${i * 0.18}s infinite`;
+            }
+          }
+          return /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(
+            "span",
+            {
+              style: {
+                display: "inline-block",
+                width: state === "thinking" ? size * 1.6 : size,
+                height: size,
+                borderRadius: state === "thinking" ? "50%" : "50%",
+                background: state === "thinking" ? "transparent" : color,
+                border: state === "thinking" ? `2px solid ${color}` : "none",
+                borderTopColor: state === "thinking" ? "transparent" : void 0,
+                transition: "background .3s ease, border-color .3s ease",
+                animation,
+                transformOrigin: "50% 50%"
+              }
+            },
+            i
+          );
+        })
+      }
+    )
+  ] });
+}
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   ACCENT_RGB,
@@ -833,7 +1054,9 @@ function PageTransition({ children, className }) {
   LiveStat,
   PageTransition,
   ScrollGenerateCard,
+  ShiftBar,
   ShiftCard,
   TiltCard,
-  useGenerate
+  useGenerate,
+  useHeyShift
 });

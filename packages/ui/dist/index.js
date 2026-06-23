@@ -792,6 +792,225 @@ function PageTransition({ children, className }) {
     pathname
   );
 }
+
+// src/voice/useHeyShift.ts
+import { useCallback, useEffect as useEffect6, useRef as useRef6, useState as useState6 } from "react";
+function getSpeechRecognitionCtor() {
+  const w = window;
+  return w.SpeechRecognition ?? w.webkitSpeechRecognition;
+}
+function useHeyShift(config = {}) {
+  const {
+    wakeWord = "hey shift",
+    language = "en-US",
+    silenceMs = 1500,
+    onCommand,
+    onStateChange
+  } = config;
+  const [state, setState] = useState6("idle");
+  const [transcript, setTranscript] = useState6("");
+  const [isSupported, setIsSupported] = useState6(false);
+  const recRef = useRef6(null);
+  const silenceTimerRef = useRef6(null);
+  const activeRef = useRef6(false);
+  const accumulatedRef = useRef6("");
+  const stateRef = useRef6("idle");
+  const updateState = useCallback((s) => {
+    stateRef.current = s;
+    setState(s);
+    onStateChange?.(s);
+  }, [onStateChange]);
+  useEffect6(() => {
+    const SR = getSpeechRecognitionCtor();
+    setIsSupported(!!(SR && window.speechSynthesis));
+  }, []);
+  const getVoice = useCallback(() => {
+    const voices = window.speechSynthesis?.getVoices() ?? [];
+    return voices.find((v) => v.name.toLowerCase().includes("will")) ?? voices.find((v) => v.name.toLowerCase().includes("daniel")) ?? voices.find((v) => v.lang.startsWith("en") && v.name.toLowerCase().includes("male")) ?? voices.find((v) => v.lang.startsWith("en")) ?? voices[0] ?? null;
+  }, []);
+  const speak = useCallback(async (text) => {
+    if (!window.speechSynthesis) return;
+    window.speechSynthesis.cancel();
+    return new Promise((resolve) => {
+      const utter = new SpeechSynthesisUtterance(text);
+      const setVoiceAndSpeak = () => {
+        const voice = getVoice();
+        if (voice) utter.voice = voice;
+        utter.rate = 1.05;
+        utter.pitch = 0.95;
+        updateState("speaking");
+        utter.onend = () => {
+          updateState("idle");
+          resolve();
+        };
+        utter.onerror = () => {
+          updateState("idle");
+          resolve();
+        };
+        window.speechSynthesis.speak(utter);
+      };
+      if (window.speechSynthesis.getVoices().length > 0) {
+        setVoiceAndSpeak();
+      } else {
+        window.speechSynthesis.onvoiceschanged = () => {
+          setVoiceAndSpeak();
+        };
+      }
+    });
+  }, [getVoice, updateState]);
+  const cancelSpeech = useCallback(() => {
+    window.speechSynthesis?.cancel();
+    if (stateRef.current === "speaking") updateState("idle");
+  }, [updateState]);
+  const resetSilenceTimer = useCallback((text) => {
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    silenceTimerRef.current = setTimeout(async () => {
+      if (!activeRef.current || !text.trim()) return;
+      activeRef.current = false;
+      accumulatedRef.current = "";
+      setTranscript("");
+      updateState("thinking");
+      try {
+        const response = await onCommand?.(text.trim());
+        if (response) {
+          await speak(response);
+        } else {
+          updateState("idle");
+        }
+      } catch {
+        updateState("error");
+        setTimeout(() => updateState("idle"), 2e3);
+      }
+    }, silenceMs);
+  }, [silenceMs, onCommand, speak, updateState]);
+  const startListening = useCallback(() => {
+    const SR = getSpeechRecognitionCtor();
+    if (!SR || recRef.current) return;
+    const rec = new SR();
+    rec.continuous = true;
+    rec.interimResults = true;
+    rec.lang = language;
+    rec.onresult = (event) => {
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const t = event.results[i][0].transcript.trim().toLowerCase();
+        const isFinal = event.results[i].isFinal;
+        if (!activeRef.current) {
+          if (t.includes(wakeWord.toLowerCase())) {
+            activeRef.current = true;
+            accumulatedRef.current = "";
+            setTranscript("");
+            updateState("wake");
+            setTimeout(() => {
+              if (activeRef.current) updateState("listening");
+            }, 300);
+          }
+        } else {
+          const raw = event.results[i][0].transcript;
+          if (isFinal) {
+            accumulatedRef.current += " " + raw;
+          }
+          const display = (accumulatedRef.current + " " + (isFinal ? "" : raw)).trim();
+          setTranscript(display);
+          resetSilenceTimer(display);
+        }
+      }
+    };
+    rec.onend = () => {
+      if (recRef.current) {
+        setTimeout(() => {
+          recRef.current?.start();
+        }, 150);
+      }
+    };
+    rec.onerror = (event) => {
+      if (event.error === "no-speech") return;
+      if (event.error === "not-allowed") updateState("error");
+    };
+    rec.start();
+    recRef.current = rec;
+  }, [language, wakeWord, resetSilenceTimer, updateState]);
+  const stopListening = useCallback(() => {
+    if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+    const rec = recRef.current;
+    recRef.current = null;
+    rec?.stop();
+    activeRef.current = false;
+    accumulatedRef.current = "";
+    setTranscript("");
+    updateState("idle");
+  }, [updateState]);
+  useEffect6(() => {
+    return () => {
+      const rec = recRef.current;
+      recRef.current = null;
+      rec?.stop();
+      if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+      window.speechSynthesis?.cancel();
+    };
+  }, []);
+  return { state, transcript, startListening, stopListening, speak, cancelSpeech, isSupported };
+}
+
+// src/voice/ShiftBar.tsx
+import { Fragment as Fragment3, jsx as jsx11, jsxs as jsxs7 } from "react/jsx-runtime";
+var COLORS = {
+  idle: "rgba(255,255,255,0.15)",
+  wake: "#0ed882",
+  listening: "#0ed882",
+  thinking: "#22d3ee",
+  speaking: "#a78bfa",
+  error: "#f87171"
+};
+function ShiftBar({ state, dots = 3, size = 7, className = "" }) {
+  const color = COLORS[state];
+  const isAnimated = state !== "idle" && state !== "error";
+  return /* @__PURE__ */ jsxs7(Fragment3, { children: [
+    /* @__PURE__ */ jsx11("style", { children: `
+        @keyframes _sb_pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.35;transform:scale(1.45)} }
+        @keyframes _sb_wave  { 0%,100%{transform:scaleY(1)} 50%{transform:scaleY(1.9)} }
+        @keyframes _sb_spin  { to{transform:rotate(360deg)} }
+      ` }),
+    /* @__PURE__ */ jsx11(
+      "span",
+      {
+        className,
+        role: "status",
+        "aria-label": `Shift: ${state}`,
+        style: { display: "inline-flex", alignItems: "center", gap: Math.round(size * 0.6) },
+        children: Array.from({ length: dots }).map((_, i) => {
+          let animation;
+          if (isAnimated) {
+            if (state === "thinking") {
+              animation = `_sb_spin 1s linear infinite`;
+            } else if (state === "speaking") {
+              animation = `_sb_wave .7s ease-in-out ${i * 0.12}s infinite`;
+            } else {
+              animation = `_sb_pulse 1.2s ease-in-out ${i * 0.18}s infinite`;
+            }
+          }
+          return /* @__PURE__ */ jsx11(
+            "span",
+            {
+              style: {
+                display: "inline-block",
+                width: state === "thinking" ? size * 1.6 : size,
+                height: size,
+                borderRadius: state === "thinking" ? "50%" : "50%",
+                background: state === "thinking" ? "transparent" : color,
+                border: state === "thinking" ? `2px solid ${color}` : "none",
+                borderTopColor: state === "thinking" ? "transparent" : void 0,
+                transition: "background .3s ease, border-color .3s ease",
+                animation,
+                transformOrigin: "50% 50%"
+              }
+            },
+            i
+          );
+        })
+      }
+    )
+  ] });
+}
 export {
   ACCENT_RGB,
   CanvasLauncher,
@@ -802,7 +1021,9 @@ export {
   LiveStat,
   PageTransition,
   ScrollGenerateCard,
+  ShiftBar,
   ShiftCard,
   TiltCard,
-  useGenerate
+  useGenerate,
+  useHeyShift
 };

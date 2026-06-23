@@ -126,6 +126,60 @@ function buildSystemPrompt(persona, memoryBlock = "", knowledgeBlock = "") {
 function definePersona(persona) {
   return persona;
 }
+
+// src/learning.ts
+function formatPreferencesForPrompt(prefs, domain) {
+  const lines = [];
+  if (prefs.responseStyle !== "standard") {
+    lines.push(`- Prefers ${prefs.responseStyle} responses (learned from edit history)`);
+  }
+  if (prefs.acceptanceRate < 0.4) {
+    lines.push(`- Low acceptance rate (${Math.round(prefs.acceptanceRate * 100)}%) \u2014 be more specific and actionable`);
+  }
+  if (prefs.avoidNotes.length > 0) {
+    lines.push(`- Avoid: ${prefs.avoidNotes.join("; ")}`);
+  }
+  if (prefs.customInstructions) {
+    lines.push(`- ${prefs.customInstructions}`);
+  }
+  if (lines.length === 0) return "";
+  return `
+
+---
+## LEARNED PREFERENCES
+Based on this user's feedback history${domain ? ` in ${domain}` : ""}:
+` + lines.join("\n");
+}
+
+// src/graph.ts
+var NoOpContextGraph = class {
+  async publish() {
+    return "";
+  }
+  async getPendingEvents() {
+    return [];
+  }
+  async markConsumed() {
+  }
+  async resolveIdentity() {
+    return null;
+  }
+  async linkIdentity() {
+  }
+};
+function formatCrossProductContextForPrompt(events) {
+  if (events.length === 0) return "";
+  return `
+
+---
+## CROSS-PRODUCT CONTEXT
+Intelligence from other Shift products this user is connected to:
+` + events.map((e) => `- [${e.sourceProduct}/${e.eventType}] ${JSON.stringify(e.payload)}`).join("\n") + `
+
+Use this context naturally where relevant \u2014 don't announce its source unless asked.`;
+}
+
+// src/brain.ts
 var DEFAULT_MODEL = "claude-sonnet-4-6";
 var DEFAULT_MAX_TOKENS = 1024;
 var ShiftBrain = class {
@@ -139,8 +193,8 @@ var ShiftBrain = class {
   }
   /** Main entry point: think through a user message and return a response. */
   async think(opts) {
-    const { userId, message, history = [] } = opts;
-    const { persona, embedding, memory, knowledge, model, maxTokens } = this.config;
+    const { userId, message, history = [], messageId } = opts;
+    const { persona, embedding, memory, knowledge, model, maxTokens, learning, contextGraph, product } = this.config;
     let memories = [];
     if (memory) {
       memories = await retrieveRelevantMemories(memory, embedding, {
@@ -150,8 +204,19 @@ var ShiftBrain = class {
         threshold: 0.25
       });
     }
+    let pendingEvents = [];
+    if (contextGraph) {
+      pendingEvents = await contextGraph.getPendingEvents(product ?? "unknown", userId);
+    }
+    let prefs = null;
+    if (learning) {
+      prefs = await learning.getPreferences(userId, product);
+    }
     const memoryBlock = formatMemoriesForPrompt(memories, persona.domain);
-    const systemPrompt = buildSystemPrompt(persona, memoryBlock);
+    const prefsBlock = prefs ? formatPreferencesForPrompt(prefs, product) : "";
+    const crossProductBlock = formatCrossProductContextForPrompt(pendingEvents);
+    const combinedContextBlock = memoryBlock + prefsBlock + crossProductBlock;
+    const systemPrompt = buildSystemPrompt(persona, combinedContextBlock);
     const messages = [
       ...history.map((t) => ({ role: t.role, content: t.content })),
       { role: "user", content: message }
@@ -201,6 +266,9 @@ var ShiftBrain = class {
         { role: "user", content: toolResults }
       ];
     }
+    if (contextGraph && pendingEvents.length > 0) {
+      await contextGraph.markConsumed(pendingEvents.map((e) => e.id));
+    }
     let memoryRecorded = false;
     if (memory && responseText) {
       const { id } = await recordMemory(memory, embedding, {
@@ -214,7 +282,13 @@ Shift: ${responseText.slice(0, 500)}`,
       });
       memoryRecorded = !!id;
     }
-    return { text: responseText, toolsInvoked, memoryRecorded };
+    return {
+      text: responseText,
+      toolsInvoked,
+      memoryRecorded,
+      preferencesApplied: !!prefs,
+      crossProductEventsConsumed: pendingEvents.length
+    };
   }
   /** Explicitly save a memory (e.g. user says "remember that…"). */
   async remember(userId, content, type = "preference") {
@@ -237,10 +311,45 @@ Shift: ${responseText.slice(0, 500)}`,
       limit: 14
     });
   }
+  /**
+   * Record user feedback on a Shift response.
+   * Use this to feed the learning engine so preferences are updated over time.
+   */
+  async feedback(userId, signal, originalText, editedText, userMessage, messageId) {
+    if (!this.config.learning) return;
+    const entry = {
+      userId,
+      signal,
+      originalText,
+      editedText,
+      userMessage,
+      messageId,
+      domain: this.config.product
+    };
+    await this.config.learning.recordFeedback(entry);
+  }
+  /**
+   * Track the outcome of a prediction.
+   * Call with actualValue once the outcome is known; omit it when creating
+   * the initial prediction record.
+   */
+  async trackOutcome(userId, predictionType, predictionId, predictedValue, actualValue) {
+    if (!this.config.learning) return;
+    const record = {
+      userId,
+      predictionType,
+      predictionId,
+      predictedValue,
+      actualValue,
+      domain: this.config.product,
+      resolvedAt: actualValue !== void 0 ? (/* @__PURE__ */ new Date()).toISOString() : void 0
+    };
+    await this.config.learning.recordOutcome(record);
+  }
   /** Stream a response. Returns an async iterable of text deltas. */
   async *stream(opts) {
     const { userId, message, history = [] } = opts;
-    const { persona, embedding, memory, model, maxTokens } = this.config;
+    const { persona, embedding, memory, model, maxTokens, learning, contextGraph, product } = this.config;
     let memories = [];
     if (memory) {
       memories = await retrieveRelevantMemories(memory, embedding, {
@@ -250,14 +359,26 @@ Shift: ${responseText.slice(0, 500)}`,
         threshold: 0.25
       });
     }
-    const systemPrompt = buildSystemPrompt(
-      persona,
-      formatMemoriesForPrompt(memories, persona.domain)
-    );
+    let pendingEvents = [];
+    if (contextGraph) {
+      pendingEvents = await contextGraph.getPendingEvents(product ?? "unknown", userId);
+    }
+    let prefs = null;
+    if (learning) {
+      prefs = await learning.getPreferences(userId, product);
+    }
+    const memoryBlock = formatMemoriesForPrompt(memories, persona.domain);
+    const prefsBlock = prefs ? formatPreferencesForPrompt(prefs, product) : "";
+    const crossProductBlock = formatCrossProductContextForPrompt(pendingEvents);
+    const combinedContextBlock = memoryBlock + prefsBlock + crossProductBlock;
+    const systemPrompt = buildSystemPrompt(persona, combinedContextBlock);
     const messages = [
       ...history.map((t) => ({ role: t.role, content: t.content })),
       { role: "user", content: message }
     ];
+    if (contextGraph && pendingEvents.length > 0) {
+      await contextGraph.markConsumed(pendingEvents.map((e) => e.id));
+    }
     const stream = this.client.messages.stream({
       model: model ?? DEFAULT_MODEL,
       max_tokens: maxTokens ?? DEFAULT_MAX_TOKENS,
@@ -277,12 +398,15 @@ Shift: ${responseText.slice(0, 500)}`,
 };
 
 exports.EMBED_DIM = EMBED_DIM;
+exports.NoOpContextGraph = NoOpContextGraph;
 exports.ShiftBrain = ShiftBrain;
 exports.ToolRegistry = ToolRegistry;
 exports.VoyageEmbeddingProvider = VoyageEmbeddingProvider;
 exports.buildSystemPrompt = buildSystemPrompt;
 exports.definePersona = definePersona;
+exports.formatCrossProductContextForPrompt = formatCrossProductContextForPrompt;
 exports.formatMemoriesForPrompt = formatMemoriesForPrompt;
+exports.formatPreferencesForPrompt = formatPreferencesForPrompt;
 exports.recordMemory = recordMemory;
 exports.retrieveRelevantMemories = retrieveRelevantMemories;
 //# sourceMappingURL=index.cjs.map

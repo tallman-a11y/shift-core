@@ -35,3 +35,11 @@ export { definePersona, buildSystemPrompt } from './persona.js';
 
 // Brain
 export { ShiftBrain } from './brain.js';
+
+// Learning Engine
+export type { FeedbackSignal, FeedbackEntry, OutcomeRecord, UserPreferences, LearningStore } from './learning.js';
+export { formatPreferencesForPrompt } from './learning.js';
+
+// Context Graph
+export type { CrossProductEvent, CrossProductIdentity, ContextGraph } from './graph.js';
+export { NoOpContextGraph, formatCrossProductContextForPrompt } from './graph.js';
