@@ -1,6 +1,6 @@
 {
   "name": "@allshift/core",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Shift family shared intelligence layer — persona, memory spine, tool registry, embeddings, ShiftBrain orchestrator.",
   "license": "UNLICENSED",
   "private": false,

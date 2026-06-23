@@ -1,33 +1,3 @@
-interface CrossProductEvent {
-    id: string;
-    sourceProduct: string;
-    eventType: string;
-    userId: string;
-    payload: Record<string, unknown>;
-    consumed: boolean;
-    createdAt: string;
-}
-interface CrossProductIdentity {
-    globalUserId: string;
-    productAccounts: Record<string, string>;
-    consentedProducts: string[];
-}
-interface ContextGraph {
-    publish(event: Omit<CrossProductEvent, 'id' | 'createdAt' | 'consumed'>): Promise<string>;
-    getPendingEvents(targetProduct: string, userId: string): Promise<CrossProductEvent[]>;
-    markConsumed(eventIds: string[]): Promise<void>;
-    resolveIdentity(product: string, localUserId: string): Promise<CrossProductIdentity | null>;
-    linkIdentity(globalUserId: string, product: string, localUserId: string, consentedProducts: string[]): Promise<void>;
-}
-declare class NoOpContextGraph implements ContextGraph {
-    publish(): Promise<string>;
-    getPendingEvents(): Promise<CrossProductEvent[]>;
-    markConsumed(): Promise<void>;
-    resolveIdentity(): Promise<null>;
-    linkIdentity(): Promise<void>;
-}
-declare function formatCrossProductContextForPrompt(events: CrossProductEvent[]): string;
-
 type FeedbackSignal = 'accept' | 'edit' | 'reject';
 interface FeedbackEntry {
     id?: string;
@@ -64,6 +34,129 @@ interface LearningStore {
     getPreferences(userId: string, domain?: string): Promise<UserPreferences | null>;
 }
 declare function formatPreferencesForPrompt(prefs: UserPreferences, domain?: string): string;
+
+/**
+ * A pattern distilled from many users' accepted signals within a domain.
+ * Represents what actually works — extracted by Shift itself from its own feedback.
+ */
+interface CollectivePattern {
+    id?: string;
+    domain: string;
+    /** Natural language description of the pattern, extracted by LLM from signal clusters. */
+    pattern: string;
+    /** 0–1. Grows with signal volume. */
+    confidence: number;
+    signalCount: number;
+    /** Sample accepted response snippets from the cluster. */
+    examples?: string[];
+    embedding?: number[];
+    updatedAt?: string;
+}
+/**
+ * A training pair ready for fine-tuning.
+ * Accepted and edited signals become (user_message → shift_response) examples.
+ */
+interface FineTuningPair {
+    messages: Array<{
+        role: 'user' | 'assistant';
+        content: string;
+    }>;
+    signal: FeedbackSignal;
+    /** If signal='edit', the user's corrected version — the ground truth response. */
+    editedResponse?: string;
+    domain: string;
+    product: string;
+}
+/**
+ * GenomeStore — the collective intelligence layer of Shift Brain.
+ *
+ * Operates above the per-user LearningStore. Where LearningStore personalizes
+ * for one user, GenomeStore mines patterns across ALL users in a domain, then
+ * feeds those patterns back into every conversation as "what works here."
+ *
+ * Over time, as signals accumulate across products (LendShift, RealShift, GSO…),
+ * the Genome becomes a distilled corpus of human decision-making patterns that
+ * makes Shift smarter for every new user before they've typed a single message.
+ *
+ * The ultimate form: a fine-tunable model trained on these patterns, making
+ * Shift Brain progressively less dependent on the base LLM for domain knowledge.
+ *
+ * Products provide a Supabase implementation. NoOpGenomeStore is the default.
+ */
+interface GenomeStore {
+    /**
+     * Attach response + query embedding vectors to a recorded feedback signal.
+     * Call immediately after LearningStore.recordFeedback() returns a feedbackId.
+     */
+    recordSignalEmbeddings(feedbackId: string, responseEmbedding: number[], queryEmbedding: number[]): Promise<void>;
+    /**
+     * Semantic search over distilled collective patterns.
+     * Pass queryEmbedding for relevance-ranked results; omit for confidence-ranked.
+     */
+    getCollectivePatterns(domain: string, queryEmbedding?: number[] | null, limit?: number): Promise<CollectivePattern[]>;
+    /**
+     * Nightly distillation job.
+     * Pulls accepted signals with embeddings → clusters them → extracts patterns
+     * via LLM → stores results in shift_collective_patterns.
+     * Returns the number of patterns written.
+     */
+    distill(domain: string, anthropicApiKey: string, embeddingProvider: EmbeddingProvider): Promise<number>;
+    /**
+     * Export fine-tuning training pairs.
+     * Returns (user_message, shift_response) pairs from accepted + edited signals.
+     * When enough data accumulates, submit to fine-tuning API to evolve the base model.
+     */
+    exportFineTuningData(domain: string, since?: Date, limit?: number): Promise<FineTuningPair[]>;
+}
+declare class NoOpGenomeStore implements GenomeStore {
+    recordSignalEmbeddings(): Promise<void>;
+    getCollectivePatterns(): Promise<CollectivePattern[]>;
+    distill(): Promise<number>;
+    exportFineTuningData(): Promise<FineTuningPair[]>;
+}
+declare function formatCollectiveIntelligenceForPrompt(patterns: CollectivePattern[]): string;
+/** Cosine similarity between two equal-length vectors. */
+declare function cosineSimilarity(a: number[], b: number[]): number;
+/**
+ * Greedy single-pass clustering by embedding similarity.
+ * Returns array of clusters (each cluster = array of indices into `signals`).
+ * Threshold 0.82 is tuned for 1024-dim Voyage embeddings.
+ */
+declare function greedyCluster<T extends {
+    embedding?: number[] | null;
+}>(signals: T[], threshold?: number): number[][];
+/** Compute the centroid of a set of equal-length embedding vectors. */
+declare function centroid(embeddings: number[][]): number[];
+
+interface CrossProductEvent {
+    id: string;
+    sourceProduct: string;
+    eventType: string;
+    userId: string;
+    payload: Record<string, unknown>;
+    consumed: boolean;
+    createdAt: string;
+}
+interface CrossProductIdentity {
+    globalUserId: string;
+    productAccounts: Record<string, string>;
+    consentedProducts: string[];
+}
+interface ContextGraph {
+    publish(event: Omit<CrossProductEvent, 'id' | 'createdAt' | 'consumed'>): Promise<string>;
+    getPendingEvents(targetProduct: string, userId: string): Promise<CrossProductEvent[]>;
+    markConsumed(eventIds: string[]): Promise<void>;
+    resolveIdentity(product: string, localUserId: string): Promise<CrossProductIdentity | null>;
+    linkIdentity(globalUserId: string, product: string, localUserId: string, consentedProducts: string[]): Promise<void>;
+}
+declare class NoOpContextGraph implements ContextGraph {
+    publish(): Promise<string>;
+    getPendingEvents(): Promise<CrossProductEvent[]>;
+    markConsumed(): Promise<void>;
+    resolveIdentity(): Promise<null>;
+    linkIdentity(): Promise<void>;
+}
+declare function formatCrossProductContextForPrompt(events: CrossProductEvent[]): string;
 
 type MemoryType = 'decision' | 'preference' | 'context' | 'correction' | 'general' | (string & {});
 type MemorySource = 'conversation' | 'explicit' | 'correction' | 'onboarding' | 'system' | (string & {});
@@ -156,6 +249,7 @@ interface BrainConfig {
     tools?: ShiftTool[];
     learning?: LearningStore;
     contextGraph?: ContextGraph;
+    genome?: GenomeStore;
     product?: string;
 }
 interface ThinkOpts {
@@ -170,6 +264,8 @@ interface ThinkResult {
     memoryRecorded: boolean;
     preferencesApplied: boolean;
     crossProductEventsConsumed: number;
+    /** Number of collective patterns from the Genome injected into this response. */
+    collectivePatternsApplied: number;
 }
 
 declare const EMBED_DIM = 1024;
@@ -263,7 +359,12 @@ declare class ShiftBrain {
     recall(userId: string, query: string): Promise<MemoryEntry[]>;
     /**
      * Record user feedback on a Shift response.
-     * Use this to feed the learning engine so preferences are updated over time.
+     * Writes the signal to LearningStore and — if an embedding provider + GenomeStore
+     * are wired in — also attaches semantic vectors to the record so it can be
+     * clustered by the nightly distillation job.
+     *
+     * Every embedded signal is raw material for the Genome: the corpus that makes
+     * Shift smarter for every user across every product over time.
      */
     feedback(userId: string, signal: FeedbackSignal, originalText: string, editedText?: string, userMessage?: string, messageId?: string): Promise<void>;
     /**
@@ -278,4 +379,4 @@ declare class ShiftBrain {
     addTool(tool: Parameters<ToolRegistry['register']>[0]): void;
 }
 
-export { type BrainConfig, type ContextGraph, type ConversationTurn, type CrossProductEvent, type CrossProductIdentity, EMBED_DIM, type EmbedInputType, type EmbeddingProvider, type FeedbackEntry, type FeedbackSignal, type KnowledgeChunk, type KnowledgeStore, type LearningStore, type MemoryEntry, type MemorySource, type MemoryStore, type MemoryType, NoOpContextGraph, type OutcomeRecord, type RecordMemoryOpts, type RecordResult, type RetrieveOpts, ShiftBrain, type ShiftPersona, type ShiftTool, type ThinkOpts, type ThinkResult, type ToolContext, type ToolInputSchema, ToolRegistry, type UserPreferences, VoyageEmbeddingProvider, buildSystemPrompt, definePersona, formatCrossProductContextForPrompt, formatMemoriesForPrompt, formatPreferencesForPrompt, recordMemory, retrieveRelevantMemories };
+export { type BrainConfig, type CollectivePattern, type ContextGraph, type ConversationTurn, type CrossProductEvent, type CrossProductIdentity, EMBED_DIM, type EmbedInputType, type EmbeddingProvider, type FeedbackEntry, type FeedbackSignal, type FineTuningPair, type GenomeStore, type KnowledgeChunk, type KnowledgeStore, type LearningStore, type MemoryEntry, type MemorySource, type MemoryStore, type MemoryType, NoOpContextGraph, NoOpGenomeStore, type OutcomeRecord, type RecordMemoryOpts, type RecordResult, type RetrieveOpts, ShiftBrain, type ShiftPersona, type ShiftTool, type ThinkOpts, type ThinkResult, type ToolContext, type ToolInputSchema, ToolRegistry, type UserPreferences, VoyageEmbeddingProvider, buildSystemPrompt, centroid, cosineSimilarity, definePersona, formatCollectiveIntelligenceForPrompt, formatCrossProductContextForPrompt, formatMemoriesForPrompt, formatPreferencesForPrompt, greedyCluster, recordMemory, retrieveRelevantMemories };

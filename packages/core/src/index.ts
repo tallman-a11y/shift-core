@@ -43,3 +43,13 @@ export { formatPreferencesForPrompt } from './learning.js';
 // Context Graph
 export type { CrossProductEvent, CrossProductIdentity, ContextGraph } from './graph.js';
 export { NoOpContextGraph, formatCrossProductContextForPrompt } from './graph.js';
+
+// Genome — collective intelligence + fine-tuning pipeline
+export type { CollectivePattern, FineTuningPair, GenomeStore } from './genome.js';
+export {
+  NoOpGenomeStore,
+  formatCollectiveIntelligenceForPrompt,
+  cosineSimilarity,
+  greedyCluster,
+  centroid,
+} from './genome.js';

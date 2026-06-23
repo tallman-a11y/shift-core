@@ -179,6 +179,81 @@ Intelligence from other Shift products this user is connected to:
 Use this context naturally where relevant \u2014 don't announce its source unless asked.`;
 }
 
+// src/genome.ts
+var NoOpGenomeStore = class {
+  async recordSignalEmbeddings() {
+  }
+  async getCollectivePatterns() {
+    return [];
+  }
+  async distill() {
+    return 0;
+  }
+  async exportFineTuningData() {
+    return [];
+  }
+};
+function formatCollectiveIntelligenceForPrompt(patterns) {
+  if (patterns.length === 0) return "";
+  const lines = patterns.map(
+    (p) => `- ${p.pattern} (confidence: ${Math.round(p.confidence * 100)}%, n=${p.signalCount})`
+  );
+  return `
+
+---
+## COLLECTIVE INTELLIGENCE
+Patterns learned from users across this domain:
+` + lines.join("\n") + `
+
+Let these patterns inform your response style \u2014 they reflect what resonates with this user base.`;
+}
+function cosineSimilarity(a, b) {
+  if (a.length !== b.length || a.length === 0) return 0;
+  let dot = 0, normA = 0, normB = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    normA += a[i] * a[i];
+    normB += b[i] * b[i];
+  }
+  const denom = Math.sqrt(normA) * Math.sqrt(normB);
+  return denom === 0 ? 0 : dot / denom;
+}
+function greedyCluster(signals, threshold = 0.82) {
+  const clusters = [];
+  const assigned = /* @__PURE__ */ new Set();
+  for (let i = 0; i < signals.length; i++) {
+    if (assigned.has(i)) continue;
+    const embA = signals[i].embedding;
+    if (!embA) {
+      assigned.add(i);
+      continue;
+    }
+    const cluster = [i];
+    assigned.add(i);
+    for (let j = i + 1; j < signals.length; j++) {
+      if (assigned.has(j)) continue;
+      const embB = signals[j].embedding;
+      if (!embB) continue;
+      if (cosineSimilarity(embA, embB) >= threshold) {
+        cluster.push(j);
+        assigned.add(j);
+      }
+    }
+    if (cluster.length >= 2) clusters.push(cluster);
+  }
+  return clusters;
+}
+function centroid(embeddings) {
+  const valid = embeddings.filter((e) => e && e.length > 0);
+  if (valid.length === 0) return [];
+  const dims = valid[0].length;
+  const sum = new Array(dims).fill(0);
+  for (const emb of valid) {
+    for (let i = 0; i < dims; i++) sum[i] += emb[i];
+  }
+  return sum.map((v) => v / valid.length);
+}
+
 // src/brain.ts
 var DEFAULT_MODEL = "claude-sonnet-4-6";
 var DEFAULT_MAX_TOKENS = 1024;
@@ -194,7 +269,7 @@ var ShiftBrain = class {
   /** Main entry point: think through a user message and return a response. */
   async think(opts) {
     const { userId, message, history = [], messageId } = opts;
-    const { persona, embedding, memory, knowledge, model, maxTokens, learning, contextGraph, product } = this.config;
+    const { persona, embedding, memory, knowledge, model, maxTokens, learning, contextGraph, genome, product } = this.config;
     let memories = [];
     if (memory) {
       memories = await retrieveRelevantMemories(memory, embedding, {
@@ -212,10 +287,19 @@ var ShiftBrain = class {
     if (learning) {
       prefs = await learning.getPreferences(userId, product);
     }
+    let collectivePatterns = [];
+    if (genome) {
+      let queryEmb = null;
+      if (embedding?.enabled()) {
+        queryEmb = await embedding.embedOne(message, "query");
+      }
+      collectivePatterns = await genome.getCollectivePatterns(product ?? "unknown", queryEmb, 3);
+    }
     const memoryBlock = formatMemoriesForPrompt(memories, persona.domain);
     const prefsBlock = prefs ? formatPreferencesForPrompt(prefs, product) : "";
     const crossProductBlock = formatCrossProductContextForPrompt(pendingEvents);
-    const combinedContextBlock = memoryBlock + prefsBlock + crossProductBlock;
+    const collectiveBlock = formatCollectiveIntelligenceForPrompt(collectivePatterns);
+    const combinedContextBlock = memoryBlock + prefsBlock + crossProductBlock + collectiveBlock;
     const systemPrompt = buildSystemPrompt(persona, combinedContextBlock);
     const messages = [
       ...history.map((t) => ({ role: t.role, content: t.content })),
@@ -287,7 +371,8 @@ Shift: ${responseText.slice(0, 500)}`,
       toolsInvoked,
       memoryRecorded,
       preferencesApplied: !!prefs,
-      crossProductEventsConsumed: pendingEvents.length
+      crossProductEventsConsumed: pendingEvents.length,
+      collectivePatternsApplied: collectivePatterns.length
     };
   }
   /** Explicitly save a memory (e.g. user says "remember that…"). */
@@ -313,10 +398,16 @@ Shift: ${responseText.slice(0, 500)}`,
   }
   /**
    * Record user feedback on a Shift response.
-   * Use this to feed the learning engine so preferences are updated over time.
+   * Writes the signal to LearningStore and — if an embedding provider + GenomeStore
+   * are wired in — also attaches semantic vectors to the record so it can be
+   * clustered by the nightly distillation job.
+   *
+   * Every embedded signal is raw material for the Genome: the corpus that makes
+   * Shift smarter for every user across every product over time.
    */
   async feedback(userId, signal, originalText, editedText, userMessage, messageId) {
-    if (!this.config.learning) return;
+    const { learning, genome, embedding, product } = this.config;
+    if (!learning) return;
     const entry = {
       userId,
       signal,
@@ -324,9 +415,18 @@ Shift: ${responseText.slice(0, 500)}`,
       editedText,
       userMessage,
       messageId,
-      domain: this.config.product
+      domain: product
     };
-    await this.config.learning.recordFeedback(entry);
+    const feedbackId = await learning.recordFeedback(entry);
+    if (feedbackId && genome && embedding?.enabled() && signal !== "reject") {
+      const [responseEmb, queryEmb] = await Promise.all([
+        embedding.embedOne(originalText, "document"),
+        embedding.embedOne(userMessage ?? originalText, "query")
+      ]);
+      if (responseEmb && queryEmb) {
+        await genome.recordSignalEmbeddings(feedbackId, responseEmb, queryEmb);
+      }
+    }
   }
   /**
    * Track the outcome of a prediction.
@@ -349,7 +449,7 @@ Shift: ${responseText.slice(0, 500)}`,
   /** Stream a response. Returns an async iterable of text deltas. */
   async *stream(opts) {
     const { userId, message, history = [] } = opts;
-    const { persona, embedding, memory, model, maxTokens, learning, contextGraph, product } = this.config;
+    const { persona, embedding, memory, model, maxTokens, learning, contextGraph, genome, product } = this.config;
     let memories = [];
     if (memory) {
       memories = await retrieveRelevantMemories(memory, embedding, {
@@ -367,10 +467,19 @@ Shift: ${responseText.slice(0, 500)}`,
     if (learning) {
       prefs = await learning.getPreferences(userId, product);
     }
+    let collectivePatterns = [];
+    if (genome) {
+      let queryEmb = null;
+      if (embedding?.enabled()) {
+        queryEmb = await embedding.embedOne(message, "query");
+      }
+      collectivePatterns = await genome.getCollectivePatterns(product ?? "unknown", queryEmb, 3);
+    }
     const memoryBlock = formatMemoriesForPrompt(memories, persona.domain);
     const prefsBlock = prefs ? formatPreferencesForPrompt(prefs, product) : "";
     const crossProductBlock = formatCrossProductContextForPrompt(pendingEvents);
-    const combinedContextBlock = memoryBlock + prefsBlock + crossProductBlock;
+    const collectiveBlock = formatCollectiveIntelligenceForPrompt(collectivePatterns);
+    const combinedContextBlock = memoryBlock + prefsBlock + crossProductBlock + collectiveBlock;
     const systemPrompt = buildSystemPrompt(persona, combinedContextBlock);
     const messages = [
       ...history.map((t) => ({ role: t.role, content: t.content })),
@@ -399,14 +508,19 @@ Shift: ${responseText.slice(0, 500)}`,
 
 exports.EMBED_DIM = EMBED_DIM;
 exports.NoOpContextGraph = NoOpContextGraph;
+exports.NoOpGenomeStore = NoOpGenomeStore;
 exports.ShiftBrain = ShiftBrain;
 exports.ToolRegistry = ToolRegistry;
 exports.VoyageEmbeddingProvider = VoyageEmbeddingProvider;
 exports.buildSystemPrompt = buildSystemPrompt;
+exports.centroid = centroid;
+exports.cosineSimilarity = cosineSimilarity;
 exports.definePersona = definePersona;
+exports.formatCollectiveIntelligenceForPrompt = formatCollectiveIntelligenceForPrompt;
 exports.formatCrossProductContextForPrompt = formatCrossProductContextForPrompt;
 exports.formatMemoriesForPrompt = formatMemoriesForPrompt;
 exports.formatPreferencesForPrompt = formatPreferencesForPrompt;
+exports.greedyCluster = greedyCluster;
 exports.recordMemory = recordMemory;
 exports.retrieveRelevantMemories = retrieveRelevantMemories;
 //# sourceMappingURL=index.cjs.map

@@ -5,6 +5,8 @@ import { ToolRegistry } from './tools.js';
 import { formatPreferencesForPrompt } from './learning.js';
 import type { FeedbackSignal, FeedbackEntry, OutcomeRecord } from './learning.js';
 import { formatCrossProductContextForPrompt } from './graph.js';
+import { formatCollectiveIntelligenceForPrompt } from './genome.js';
+import type { CollectivePattern } from './genome.js';
 import type {
   BrainConfig,
   ThinkOpts,
@@ -55,7 +57,7 @@ export class ShiftBrain {
   /** Main entry point: think through a user message and return a response. */
   async think(opts: ThinkOpts): Promise<ThinkResult> {
     const { userId, message, history = [], messageId } = opts;
-    const { persona, embedding, memory, knowledge, model, maxTokens, learning, contextGraph, product } = this.config;
+    const { persona, embedding, memory, knowledge, model, maxTokens, learning, contextGraph, genome, product } = this.config;
 
     // 1. Recall relevant memories.
     let memories: MemoryEntry[] = [];
@@ -74,17 +76,28 @@ export class ShiftBrain {
       pendingEvents = await contextGraph.getPendingEvents(product ?? 'unknown', userId);
     }
 
-    // 3. Fetch learned preferences.
+    // 3. Fetch learned preferences (individual).
     let prefs: import('./learning.js').UserPreferences | null = null;
     if (learning) {
       prefs = await learning.getPreferences(userId, product);
+    }
+
+    // 3b. Fetch collective patterns from the Genome (cross-user intelligence).
+    let collectivePatterns: CollectivePattern[] = [];
+    if (genome) {
+      let queryEmb: number[] | null = null;
+      if (embedding?.enabled()) {
+        queryEmb = await embedding.embedOne(message, 'query');
+      }
+      collectivePatterns = await genome.getCollectivePatterns(product ?? 'unknown', queryEmb, 3);
     }
 
     // 4. Build system prompt with all context blocks.
     const memoryBlock = formatMemoriesForPrompt(memories, persona.domain);
     const prefsBlock = prefs ? formatPreferencesForPrompt(prefs, product) : '';
     const crossProductBlock = formatCrossProductContextForPrompt(pendingEvents);
-    const combinedContextBlock = memoryBlock + prefsBlock + crossProductBlock;
+    const collectiveBlock = formatCollectiveIntelligenceForPrompt(collectivePatterns);
+    const combinedContextBlock = memoryBlock + prefsBlock + crossProductBlock + collectiveBlock;
     const systemPrompt = buildSystemPrompt(persona, combinedContextBlock);
 
     // 5. Build messages array.
@@ -176,6 +189,7 @@ export class ShiftBrain {
       memoryRecorded,
       preferencesApplied: !!prefs,
       crossProductEventsConsumed: pendingEvents.length,
+      collectivePatternsApplied: collectivePatterns.length,
     };
   }
 
@@ -204,7 +218,12 @@ export class ShiftBrain {
 
   /**
    * Record user feedback on a Shift response.
-   * Use this to feed the learning engine so preferences are updated over time.
+   * Writes the signal to LearningStore and — if an embedding provider + GenomeStore
+   * are wired in — also attaches semantic vectors to the record so it can be
+   * clustered by the nightly distillation job.
+   *
+   * Every embedded signal is raw material for the Genome: the corpus that makes
+   * Shift smarter for every user across every product over time.
    */
   async feedback(
     userId: string,
@@ -214,7 +233,9 @@ export class ShiftBrain {
     userMessage?: string,
     messageId?: string,
   ): Promise<void> {
-    if (!this.config.learning) return;
+    const { learning, genome, embedding, product } = this.config;
+    if (!learning) return;
+
     const entry: FeedbackEntry = {
       userId,
       signal,
@@ -222,9 +243,21 @@ export class ShiftBrain {
       editedText,
       userMessage,
       messageId,
-      domain: this.config.product,
+      domain: product,
     };
-    await this.config.learning.recordFeedback(entry);
+    const feedbackId = await learning.recordFeedback(entry);
+
+    // Embed the signal for semantic clustering — only for positive signals that
+    // are worth feeding into the Genome (accept = gold, edit = silver).
+    if (feedbackId && genome && embedding?.enabled() && signal !== 'reject') {
+      const [responseEmb, queryEmb] = await Promise.all([
+        embedding.embedOne(originalText, 'document'),
+        embedding.embedOne(userMessage ?? originalText, 'query'),
+      ]);
+      if (responseEmb && queryEmb) {
+        await genome.recordSignalEmbeddings(feedbackId, responseEmb, queryEmb);
+      }
+    }
   }
 
   /**
@@ -255,7 +288,7 @@ export class ShiftBrain {
   /** Stream a response. Returns an async iterable of text deltas. */
   async *stream(opts: ThinkOpts): AsyncIterable<string> {
     const { userId, message, history = [] } = opts;
-    const { persona, embedding, memory, model, maxTokens, learning, contextGraph, product } = this.config;
+    const { persona, embedding, memory, model, maxTokens, learning, contextGraph, genome, product } = this.config;
 
     // 1. Recall relevant memories.
     let memories: MemoryEntry[] = [];
@@ -271,17 +304,28 @@ export class ShiftBrain {
       pendingEvents = await contextGraph.getPendingEvents(product ?? 'unknown', userId);
     }
 
-    // 3. Fetch learned preferences.
+    // 3. Fetch learned preferences (individual).
     let prefs: import('./learning.js').UserPreferences | null = null;
     if (learning) {
       prefs = await learning.getPreferences(userId, product);
+    }
+
+    // 3b. Fetch collective patterns from the Genome.
+    let collectivePatterns: CollectivePattern[] = [];
+    if (genome) {
+      let queryEmb: number[] | null = null;
+      if (embedding?.enabled()) {
+        queryEmb = await embedding.embedOne(message, 'query');
+      }
+      collectivePatterns = await genome.getCollectivePatterns(product ?? 'unknown', queryEmb, 3);
     }
 
     // 4. Build system prompt with all context blocks.
     const memoryBlock = formatMemoriesForPrompt(memories, persona.domain);
     const prefsBlock = prefs ? formatPreferencesForPrompt(prefs, product) : '';
     const crossProductBlock = formatCrossProductContextForPrompt(pendingEvents);
-    const combinedContextBlock = memoryBlock + prefsBlock + crossProductBlock;
+    const collectiveBlock = formatCollectiveIntelligenceForPrompt(collectivePatterns);
+    const combinedContextBlock = memoryBlock + prefsBlock + crossProductBlock + collectiveBlock;
 
     const systemPrompt = buildSystemPrompt(persona, combinedContextBlock);
 

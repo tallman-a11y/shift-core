@@ -118,6 +118,7 @@ export interface BrainConfig {
   tools?: ShiftTool[];
   learning?: import('./learning.js').LearningStore;
   contextGraph?: import('./graph.js').ContextGraph;
+  genome?: import('./genome.js').GenomeStore;
   product?: string; // e.g. 'lendshift', 'realshift'
 }
 
@@ -134,4 +135,6 @@ export interface ThinkResult {
   memoryRecorded: boolean;
   preferencesApplied: boolean;
   crossProductEventsConsumed: number;
+  /** Number of collective patterns from the Genome injected into this response. */
+  collectivePatternsApplied: number;
 }
