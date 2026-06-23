@@ -35,6 +35,69 @@ interface LearningStore {
 }
 declare function formatPreferencesForPrompt(prefs: UserPreferences, domain?: string): string;
 
+type FineTuningFormat = 'openai' | 'anthropic' | 'hf';
+/**
+ * Export fine-tuning pairs as JSONL in the target format.
+ *
+ * The Genome accumulates (user_message, accepted_shift_response) pairs.
+ * When enough data exists, submit this output to a fine-tuning API to
+ * evolve a base model into a domain-specialized Shift model.
+ *
+ * Volume thresholds (rough guidelines):
+ *   - 1,000 pairs → measurable domain adaptation, better tone/terminology
+ *   - 5,000 pairs → strong domain specialization, reliable style transfer
+ *   - 20,000 pairs → model begins capturing business logic + user patterns
+ *   - 100,000+ pairs → proprietary model with real competitive differentiation
+ *
+ * Format notes:
+ *   'openai'    → compatible with OpenAI fine-tuning API (gpt-4o-mini, gpt-3.5)
+ *   'anthropic' → compatible with Anthropic fine-tuning API (when available)
+ *   'hf'        → HuggingFace SFTTrainer format (Llama, Mistral, Qwen, Phi, etc.)
+ *                 Use this to train a self-hosted model that runs on your own GPU
+ *                 with zero per-token cost and complete data ownership.
+ */
+declare function exportForFineTuning(pairs: FineTuningPair[], format: FineTuningFormat, systemPrompt?: string): string;
+/**
+ * Describes a fine-tuning job submitted to an external API.
+ * Store via GenomeStore.recordTrainingJob() to track the journey to independence.
+ */
+interface TrainingJob {
+    id?: string;
+    domain: string;
+    product: string;
+    format: FineTuningFormat;
+    pairCount: number;
+    submittedAt: string;
+    status: 'pending' | 'training' | 'complete' | 'failed';
+    /** The job ID returned by OpenAI/Anthropic fine-tuning API. */
+    externalJobId?: string;
+    /** The resulting model ID once training is complete (e.g. 'ft:gpt-4o-mini:allshift:...'). */
+    fineTunedModelId?: string;
+    notes?: string;
+}
+/**
+ * Describes a deployed model version.
+ * Track traffic allocation during gradual rollout via RouterProvider.
+ */
+interface ModelVersion {
+    id?: string;
+    domain: string;
+    product: string;
+    /** Human-readable version tag: 'shift-lendshift-v1', 'shift-realshift-v2', etc. */
+    version: string;
+    /** The model ID passed to the provider: 'ft:gpt-4o-mini:...', 'shift-v1', etc. */
+    modelId: string;
+    /** Provider type: 'openai-compat' | 'ollama' | 'anthropic' | 'shift'. */
+    providerType: string;
+    /** Inference endpoint URL (for openai-compat/ollama providers). */
+    baseURL?: string;
+    /** Current traffic allocation (0–100). Increase during canary rollout. */
+    trafficPercent: number;
+    /** Deployment phase. */
+    status: 'shadow' | 'canary' | 'production' | 'retired';
+    createdAt?: string;
+}
+
 /**
  * A pattern distilled from many users' accepted signals within a domain.
  * Represents what actually works — extracted by Shift itself from its own feedback.
@@ -107,12 +170,34 @@ interface GenomeStore {
      * When enough data accumulates, submit to fine-tuning API to evolve the base model.
      */
     exportFineTuningData(domain: string, since?: Date, limit?: number): Promise<FineTuningPair[]>;
+    /**
+     * Record that a fine-tuning job was submitted.
+     * Returns the stored job ID for future status updates.
+     */
+    recordTrainingJob(job: TrainingJob): Promise<string | null>;
+    /**
+     * Update the status or result of a previously submitted training job.
+     */
+    updateTrainingJob(id: string, updates: Partial<TrainingJob>): Promise<void>;
+    /**
+     * Get the currently active (production or canary) model version for a domain.
+     * Returns null when no fine-tuned model is deployed yet (brain uses base provider).
+     */
+    getActiveModelVersion(domain: string): Promise<ModelVersion | null>;
+    /**
+     * Record a new model version. Used when deploying a fine-tuned model.
+     */
+    recordModelVersion(version: ModelVersion): Promise<string | null>;
 }
 declare class NoOpGenomeStore implements GenomeStore {
     recordSignalEmbeddings(): Promise<void>;
     getCollectivePatterns(): Promise<CollectivePattern[]>;
     distill(): Promise<number>;
     exportFineTuningData(): Promise<FineTuningPair[]>;
+    recordTrainingJob(): Promise<string | null>;
+    updateTrainingJob(): Promise<void>;
+    getActiveModelVersion(): Promise<ModelVersion | null>;
+    recordModelVersion(): Promise<string | null>;
 }
 declare function formatCollectiveIntelligenceForPrompt(patterns: CollectivePattern[]): string;
 /** Cosine similarity between two equal-length vectors. */
@@ -157,6 +242,65 @@ declare class NoOpContextGraph implements ContextGraph {
     linkIdentity(): Promise<void>;
 }
 declare function formatCrossProductContextForPrompt(events: CrossProductEvent[]): string;
+
+interface ProviderTool {
+    name: string;
+    description: string;
+    parameters: ToolInputSchema;
+}
+/**
+ * Called by the provider's tool loop with each tool invocation.
+ * The brain passes a closure that captures userId and registry.
+ */
+type ToolExecutor = (name: string, input: Record<string, unknown>) => Promise<unknown>;
+interface ProviderMessage {
+    role: 'user' | 'assistant';
+    content: string;
+}
+interface ProviderResponse {
+    text: string;
+    /** Names of every tool called during this completion, in order. */
+    toolsInvoked: string[];
+}
+/**
+ * ModelProvider — the inference abstraction that makes Shift Brain
+ * independent of any particular AI vendor.
+ *
+ * Today: AnthropicProvider (default).
+ * Tomorrow: OpenAICompatProvider pointed at a fine-tuned Shift model.
+ * Eventually: ShiftModelProvider — no external API call, no per-token cost,
+ *   weights trained entirely on the Genome's accumulated signal corpus.
+ *
+ * Swapping providers is a one-line config change in the brain.
+ * No other code changes anywhere in any product.
+ */
+interface ModelProvider {
+    /** Human-readable provider name for logging/telemetry. */
+    readonly name: string;
+    /** The model identifier being used (e.g. 'claude-sonnet-4-6', 'shift-v1'). */
+    readonly modelId: string;
+    /**
+     * Run a full completion including the agentic tool loop.
+     * The provider handles its own native tool protocol internally;
+     * the brain only needs to supply a toolExecutor callback.
+     */
+    complete(opts: {
+        system: string;
+        messages: ProviderMessage[];
+        tools?: ProviderTool[];
+        toolExecutor?: ToolExecutor;
+        maxTokens?: number;
+    }): Promise<ProviderResponse>;
+    /**
+     * Stream text deltas. Tools are not supported in stream mode — use complete()
+     * for agentic loops. Stream is for conversational responses where latency matters.
+     */
+    stream(opts: {
+        system: string;
+        messages: ProviderMessage[];
+        maxTokens?: number;
+    }): AsyncIterable<string>;
+}
 
 type MemoryType = 'decision' | 'preference' | 'context' | 'correction' | 'general' | (string & {});
 type MemorySource = 'conversation' | 'explicit' | 'correction' | 'onboarding' | 'system' | (string & {});
@@ -240,7 +384,18 @@ interface ConversationTurn {
 }
 interface BrainConfig {
     persona: ShiftPersona;
-    anthropicApiKey: string;
+    /**
+     * Explicit model provider. When set, anthropicApiKey and model are ignored.
+     * Use AnthropicProvider (default), OpenAICompatProvider, OllamaProvider,
+     * RouterProvider, or any custom ModelProvider implementation.
+     *
+     * The independence path:
+     *   provider: new OpenAICompatProvider({ baseURL: 'http://your-gpu/v1', model: 'shift-v1', apiKey: '...' })
+     */
+    provider?: ModelProvider;
+    /** Convenience: auto-creates AnthropicProvider when provider is not set. */
+    anthropicApiKey?: string;
+    /** Model override for the auto-created AnthropicProvider. Ignored when provider is set. */
     model?: string;
     maxTokens?: number;
     embedding?: EmbeddingProvider;
@@ -310,6 +465,8 @@ declare class ToolRegistry {
         description: string;
         input_schema: ToolInputSchema;
     }>;
+    /** Returns tool definitions in the provider-agnostic ProviderTool format. */
+    providerDefinitions(): ProviderTool[];
     execute(name: string, input: Record<string, unknown>, context: ToolContext): Promise<unknown>;
 }
 
@@ -347,7 +504,7 @@ declare function definePersona(persona: ShiftPersona): ShiftPersona;
  * ```
  */
 declare class ShiftBrain {
-    private readonly client;
+    private readonly provider;
     private readonly registry;
     private readonly config;
     constructor(config: BrainConfig);
@@ -379,4 +536,167 @@ declare class ShiftBrain {
     addTool(tool: Parameters<ToolRegistry['register']>[0]): void;
 }
 
-export { type BrainConfig, type CollectivePattern, type ContextGraph, type ConversationTurn, type CrossProductEvent, type CrossProductIdentity, EMBED_DIM, type EmbedInputType, type EmbeddingProvider, type FeedbackEntry, type FeedbackSignal, type FineTuningPair, type GenomeStore, type KnowledgeChunk, type KnowledgeStore, type LearningStore, type MemoryEntry, type MemorySource, type MemoryStore, type MemoryType, NoOpContextGraph, NoOpGenomeStore, type OutcomeRecord, type RecordMemoryOpts, type RecordResult, type RetrieveOpts, ShiftBrain, type ShiftPersona, type ShiftTool, type ThinkOpts, type ThinkResult, type ToolContext, type ToolInputSchema, ToolRegistry, type UserPreferences, VoyageEmbeddingProvider, buildSystemPrompt, centroid, cosineSimilarity, definePersona, formatCollectiveIntelligenceForPrompt, formatCrossProductContextForPrompt, formatMemoriesForPrompt, formatPreferencesForPrompt, greedyCluster, recordMemory, retrieveRelevantMemories };
+/**
+ * AnthropicProvider — wraps the Anthropic Messages API.
+ *
+ * This is the default provider while Shift Brain runs on Claude.
+ * When the fine-tuned Shift model is ready, swap in OpenAICompatProvider
+ * (or ShiftModelProvider) without touching any other code.
+ *
+ * Handles the full agentic tool loop internally in Anthropic's native format.
+ */
+declare class AnthropicProvider implements ModelProvider {
+    readonly name = "anthropic";
+    readonly modelId: string;
+    private readonly client;
+    constructor(apiKey: string, model?: string);
+    complete(opts: {
+        system: string;
+        messages: ProviderMessage[];
+        tools?: ProviderTool[];
+        toolExecutor?: ToolExecutor;
+        maxTokens?: number;
+    }): Promise<ProviderResponse>;
+    stream(opts: {
+        system: string;
+        messages: ProviderMessage[];
+        maxTokens?: number;
+    }): AsyncIterable<string>;
+}
+
+interface OpenAICompatConfig {
+    /** API base URL. OpenAI: 'https://api.openai.com/v1'. Ollama: 'http://localhost:11434/v1'. */
+    baseURL: string;
+    model: string;
+    /** API key. Use 'ollama' for local Ollama (no real key needed). */
+    apiKey: string;
+    /** Override the provider name shown in logs. Default: derived from baseURL. */
+    providerName?: string;
+}
+/**
+ * OpenAICompatProvider — works with any OpenAI-compatible inference server.
+ *
+ * This is the path to Shift's independence from external AI vendors:
+ *
+ *   // Today — OpenAI fine-tuned model
+ *   new OpenAICompatProvider({
+ *     baseURL: 'https://api.openai.com/v1',
+ *     model: 'ft:gpt-4o-mini:allshift:lendshift-v1:xxxxx',
+ *     apiKey: process.env.OPENAI_API_KEY,
+ *   });
+ *
+ *   // Tomorrow — self-hosted Shift model on a $50/mo GPU VM
+ *   new OpenAICompatProvider({
+ *     baseURL: 'http://your-server:11434/v1',
+ *     model: 'shift-v1',
+ *     apiKey: 'ollama',
+ *   });
+ *
+ *   // Eventually — no external call, no per-token cost, 100% owned
+ *   new OpenAICompatProvider({
+ *     baseURL: 'http://internal-shift-inference/v1',
+ *     model: 'shift-brain-1.0',
+ *     apiKey: process.env.SHIFT_INTERNAL_KEY,
+ *   });
+ *
+ * Uses native fetch — no SDK dependency. Runs in any environment.
+ */
+declare class OpenAICompatProvider implements ModelProvider {
+    readonly name: string;
+    readonly modelId: string;
+    private readonly baseURL;
+    private readonly apiKey;
+    constructor(config: OpenAICompatConfig);
+    complete(opts: {
+        system: string;
+        messages: ProviderMessage[];
+        tools?: ProviderTool[];
+        toolExecutor?: ToolExecutor;
+        maxTokens?: number;
+    }): Promise<ProviderResponse>;
+    stream(opts: {
+        system: string;
+        messages: ProviderMessage[];
+        maxTokens?: number;
+    }): AsyncIterable<string>;
+}
+/**
+ * Convenience factory for local Ollama inference.
+ * Runs any Ollama model (including fine-tuned Shift models) with zero external calls.
+ *
+ * Usage:
+ *   const provider = OllamaProvider('shift-lendshift-v1');
+ *   const brain = new ShiftBrain({ provider, ... });
+ */
+declare function OllamaProvider(model: string, baseURL?: string): OpenAICompatProvider;
+
+interface RouterConfig {
+    /** Primary provider — serves all traffic unless overridden. */
+    primary: ModelProvider;
+    /**
+     * Fallback provider — used when primary throws.
+     * Lets you point primary at the Shift model and fallback at Anthropic.
+     * Traffic silently falls back; no error reaches the user.
+     */
+    fallback?: ModelProvider;
+    /**
+     * Shadow provider — runs on every request alongside primary but its
+     * response is discarded. Used to evaluate a new model before routing
+     * real traffic to it. Failures are silently swallowed.
+     */
+    shadow?: ModelProvider;
+    /**
+     * Canary traffic split (0–100).
+     * When set, this % of requests are routed to `canary` instead of `primary`.
+     * Use this to ramp a fine-tuned Shift model from 5% → 25% → 100%.
+     */
+    canaryPercent?: number;
+    canary?: ModelProvider;
+    /** Called with routing decisions for observability. */
+    onRoute?: (decision: RouteDecision) => void;
+}
+interface RouteDecision {
+    provider: string;
+    reason: 'primary' | 'fallback' | 'canary' | 'shadow';
+    shadowProvider?: string;
+}
+/**
+ * RouterProvider — safely migrates Shift Brain from one model to another.
+ *
+ * Migration path to independence:
+ *
+ *   Phase 1 — Shadow: run Shift model silently alongside Anthropic.
+ *     Collect output for eval without exposing users to it.
+ *     new RouterProvider({ primary: anthropic, shadow: shiftModel })
+ *
+ *   Phase 2 — Canary: route 10% of real traffic to Shift model.
+ *     Compare quality metrics. Increase as confidence grows.
+ *     new RouterProvider({ primary: anthropic, canary: shiftModel, canaryPercent: 10 })
+ *
+ *   Phase 3 — Flip: Shift model is primary, Anthropic is fallback.
+ *     Zero downtime, instant rollback if needed.
+ *     new RouterProvider({ primary: shiftModel, fallback: anthropic })
+ *
+ *   Phase 4 — Independence: remove fallback. No external API. No per-token cost.
+ *     new ShiftBrain({ provider: shiftModel })
+ */
+declare class RouterProvider implements ModelProvider {
+    private readonly config;
+    readonly name: string;
+    readonly modelId: string;
+    constructor(config: RouterConfig);
+    complete(opts: {
+        system: string;
+        messages: ProviderMessage[];
+        tools?: ProviderTool[];
+        toolExecutor?: ToolExecutor;
+        maxTokens?: number;
+    }): Promise<ProviderResponse>;
+    stream(opts: {
+        system: string;
+        messages: ProviderMessage[];
+        maxTokens?: number;
+    }): AsyncIterable<string>;
+}
+
+export { AnthropicProvider, type BrainConfig, type CollectivePattern, type ContextGraph, type ConversationTurn, type CrossProductEvent, type CrossProductIdentity, EMBED_DIM, type EmbedInputType, type EmbeddingProvider, type FeedbackEntry, type FeedbackSignal, type FineTuningFormat, type FineTuningPair, type GenomeStore, type KnowledgeChunk, type KnowledgeStore, type LearningStore, type MemoryEntry, type MemorySource, type MemoryStore, type MemoryType, type ModelProvider, type ModelVersion, NoOpContextGraph, NoOpGenomeStore, OllamaProvider, type OpenAICompatConfig, OpenAICompatProvider, type OutcomeRecord, type ProviderMessage, type ProviderResponse, type ProviderTool, type RecordMemoryOpts, type RecordResult, type RetrieveOpts, type RouteDecision, type RouterConfig, RouterProvider, ShiftBrain, type ShiftPersona, type ShiftTool, type ThinkOpts, type ThinkResult, type ToolContext, type ToolExecutor, type ToolInputSchema, ToolRegistry, type TrainingJob, type UserPreferences, VoyageEmbeddingProvider, buildSystemPrompt, centroid, cosineSimilarity, definePersona, exportForFineTuning, formatCollectiveIntelligenceForPrompt, formatCrossProductContextForPrompt, formatMemoriesForPrompt, formatPreferencesForPrompt, greedyCluster, recordMemory, retrieveRelevantMemories };

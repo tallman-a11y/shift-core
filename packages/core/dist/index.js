@@ -106,6 +106,14 @@ var ToolRegistry = class {
       input_schema
     }));
   }
+  /** Returns tool definitions in the provider-agnostic ProviderTool format. */
+  providerDefinitions() {
+    return this.all().map(({ name, description, input_schema }) => ({
+      name,
+      description,
+      parameters: input_schema
+    }));
+  }
   async execute(name, input, context) {
     const tool = this._tools.get(name);
     if (!tool) throw new Error(`[shift/core] unknown tool: ${name}`);
@@ -186,6 +194,17 @@ var NoOpGenomeStore = class {
   async exportFineTuningData() {
     return [];
   }
+  async recordTrainingJob() {
+    return null;
+  }
+  async updateTrainingJob() {
+  }
+  async getActiveModelVersion() {
+    return null;
+  }
+  async recordModelVersion() {
+    return null;
+  }
 };
 function formatCollectiveIntelligenceForPrompt(patterns) {
   if (patterns.length === 0) return "";
@@ -247,14 +266,89 @@ function centroid(embeddings) {
   }
   return sum.map((v) => v / valid.length);
 }
+var DEFAULT_MODEL = "claude-sonnet-4-6";
+var AnthropicProvider = class {
+  constructor(apiKey, model = DEFAULT_MODEL) {
+    this.name = "anthropic";
+    this.client = new Anthropic({ apiKey });
+    this.modelId = model;
+  }
+  async complete(opts) {
+    const { system, messages, tools, toolExecutor, maxTokens = 1024 } = opts;
+    let currentMessages = messages.map((m) => ({
+      role: m.role,
+      content: m.content
+    }));
+    const anthropicTools = (tools ?? []).map((t) => ({
+      name: t.name,
+      description: t.description,
+      input_schema: t.parameters
+    }));
+    let responseText = "";
+    const toolsInvoked = [];
+    while (true) {
+      const response = await this.client.messages.create({
+        model: this.modelId,
+        max_tokens: maxTokens,
+        system,
+        messages: currentMessages,
+        ...anthropicTools.length > 0 ? { tools: anthropicTools } : {}
+      });
+      const textBlocks = response.content.filter(
+        (b) => b.type === "text"
+      );
+      if (textBlocks.length) {
+        responseText = textBlocks.map((b) => b.text).join("");
+      }
+      if (response.stop_reason !== "tool_use" || !toolExecutor) break;
+      const toolUseBlocks = response.content.filter(
+        (b) => b.type === "tool_use"
+      );
+      const toolResults = [];
+      for (const block of toolUseBlocks) {
+        toolsInvoked.push(block.name);
+        let result;
+        try {
+          result = await toolExecutor(block.name, block.input);
+        } catch (err) {
+          result = { error: String(err) };
+        }
+        toolResults.push({
+          type: "tool_result",
+          tool_use_id: block.id,
+          content: JSON.stringify(result)
+        });
+      }
+      currentMessages = [
+        ...currentMessages,
+        { role: "assistant", content: response.content },
+        { role: "user", content: toolResults }
+      ];
+    }
+    return { text: responseText, toolsInvoked };
+  }
+  async *stream(opts) {
+    const { system, messages, maxTokens = 1024 } = opts;
+    const stream = this.client.messages.stream({
+      model: this.modelId,
+      max_tokens: maxTokens,
+      system,
+      messages: messages.map((m) => ({ role: m.role, content: m.content }))
+    });
+    for await (const event of stream) {
+      if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
+        yield event.delta.text;
+      }
+    }
+  }
+};
 
 // src/brain.ts
-var DEFAULT_MODEL = "claude-sonnet-4-6";
 var DEFAULT_MAX_TOKENS = 1024;
 var ShiftBrain = class {
   constructor(config) {
     this.config = config;
-    this.client = new Anthropic({ apiKey: config.anthropicApiKey });
+    this.provider = config.provider ?? new AnthropicProvider(config.anthropicApiKey, config.model);
     this.registry = new ToolRegistry();
     for (const tool of config.tools ?? []) {
       this.registry.register(tool);
@@ -263,7 +357,7 @@ var ShiftBrain = class {
   /** Main entry point: think through a user message and return a response. */
   async think(opts) {
     const { userId, message, history = [], messageId } = opts;
-    const { persona, embedding, memory, knowledge, model, maxTokens, learning, contextGraph, genome, product } = this.config;
+    const { persona, embedding, memory, maxTokens, learning, contextGraph, genome, product } = this.config;
     let memories = [];
     if (memory) {
       memories = await retrieveRelevantMemories(memory, embedding, {
@@ -295,55 +389,23 @@ var ShiftBrain = class {
     const collectiveBlock = formatCollectiveIntelligenceForPrompt(collectivePatterns);
     const combinedContextBlock = memoryBlock + prefsBlock + crossProductBlock + collectiveBlock;
     const systemPrompt = buildSystemPrompt(persona, combinedContextBlock);
-    const messages = [
+    const providerMessages = [
       ...history.map((t) => ({ role: t.role, content: t.content })),
       { role: "user", content: message }
     ];
     const toolsInvoked = [];
-    let responseText = "";
-    const tools = this.registry.definitions();
-    let currentMessages = messages;
-    while (true) {
-      const response = await this.client.messages.create({
-        model: model ?? DEFAULT_MODEL,
-        max_tokens: maxTokens ?? DEFAULT_MAX_TOKENS,
-        system: systemPrompt,
-        messages: currentMessages,
-        ...tools.length > 0 ? { tools } : {}
-      });
-      const textBlocks = response.content.filter((b) => b.type === "text");
-      if (textBlocks.length) {
-        responseText = textBlocks.map((b) => b.text).join("");
-      }
-      if (response.stop_reason !== "tool_use") break;
-      const toolUseBlocks = response.content.filter(
-        (b) => b.type === "tool_use"
-      );
-      const toolResults = [];
-      for (const block of toolUseBlocks) {
-        toolsInvoked.push(block.name);
-        let result;
-        try {
-          result = await this.registry.execute(
-            block.name,
-            block.input,
-            { userId }
-          );
-        } catch (err) {
-          result = { error: String(err) };
-        }
-        toolResults.push({
-          type: "tool_result",
-          tool_use_id: block.id,
-          content: JSON.stringify(result)
-        });
-      }
-      currentMessages = [
-        ...currentMessages,
-        { role: "assistant", content: response.content },
-        { role: "user", content: toolResults }
-      ];
-    }
+    const providerResponse = await this.provider.complete({
+      system: systemPrompt,
+      messages: providerMessages,
+      tools: this.registry.providerDefinitions(),
+      toolExecutor: async (name, input) => {
+        toolsInvoked.push(name);
+        return this.registry.execute(name, input, { userId });
+      },
+      maxTokens: maxTokens ?? DEFAULT_MAX_TOKENS
+    });
+    const responseText = providerResponse.text;
+    toolsInvoked.push(...providerResponse.toolsInvoked.filter((n) => !toolsInvoked.includes(n)));
     if (contextGraph && pendingEvents.length > 0) {
       await contextGraph.markConsumed(pendingEvents.map((e) => e.id));
     }
@@ -443,7 +505,7 @@ Shift: ${responseText.slice(0, 500)}`,
   /** Stream a response. Returns an async iterable of text deltas. */
   async *stream(opts) {
     const { userId, message, history = [] } = opts;
-    const { persona, embedding, memory, model, maxTokens, learning, contextGraph, genome, product } = this.config;
+    const { persona, embedding, memory, maxTokens, learning, contextGraph, genome, product } = this.config;
     let memories = [];
     if (memory) {
       memories = await retrieveRelevantMemories(memory, embedding, {
@@ -475,24 +537,18 @@ Shift: ${responseText.slice(0, 500)}`,
     const collectiveBlock = formatCollectiveIntelligenceForPrompt(collectivePatterns);
     const combinedContextBlock = memoryBlock + prefsBlock + crossProductBlock + collectiveBlock;
     const systemPrompt = buildSystemPrompt(persona, combinedContextBlock);
-    const messages = [
-      ...history.map((t) => ({ role: t.role, content: t.content })),
-      { role: "user", content: message }
-    ];
     if (contextGraph && pendingEvents.length > 0) {
       await contextGraph.markConsumed(pendingEvents.map((e) => e.id));
     }
-    const stream = this.client.messages.stream({
-      model: model ?? DEFAULT_MODEL,
-      max_tokens: maxTokens ?? DEFAULT_MAX_TOKENS,
+    const providerMessages = [
+      ...history.map((t) => ({ role: t.role, content: t.content })),
+      { role: "user", content: message }
+    ];
+    yield* this.provider.stream({
       system: systemPrompt,
-      messages
+      messages: providerMessages,
+      maxTokens: maxTokens ?? DEFAULT_MAX_TOKENS
     });
-    for await (const event of stream) {
-      if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
-        yield event.delta.text;
-      }
-    }
   }
   /** Register an additional tool at runtime. */
   addTool(tool) {
@@ -500,6 +556,242 @@ Shift: ${responseText.slice(0, 500)}`,
   }
 };
 
-export { EMBED_DIM, NoOpContextGraph, NoOpGenomeStore, ShiftBrain, ToolRegistry, VoyageEmbeddingProvider, buildSystemPrompt, centroid, cosineSimilarity, definePersona, formatCollectiveIntelligenceForPrompt, formatCrossProductContextForPrompt, formatMemoriesForPrompt, formatPreferencesForPrompt, greedyCluster, recordMemory, retrieveRelevantMemories };
+// src/providers/openai-compat.ts
+var OpenAICompatProvider = class {
+  constructor(config) {
+    this.baseURL = config.baseURL.replace(/\/$/, "");
+    this.modelId = config.model;
+    this.apiKey = config.apiKey;
+    this.name = config.providerName ?? new URL(config.baseURL).hostname;
+  }
+  async complete(opts) {
+    const { system, messages, tools, toolExecutor, maxTokens = 1024 } = opts;
+    let currentMessages = [
+      { role: "system", content: system },
+      ...messages.map((m) => ({ role: m.role, content: m.content }))
+    ];
+    const oaiTools = (tools ?? []).map((t) => ({
+      type: "function",
+      function: {
+        name: t.name,
+        description: t.description,
+        parameters: t.parameters
+      }
+    }));
+    let responseText = "";
+    const toolsInvoked = [];
+    while (true) {
+      const body = {
+        model: this.modelId,
+        max_tokens: maxTokens,
+        messages: currentMessages
+      };
+      if (oaiTools.length > 0) {
+        body.tools = oaiTools;
+        body.tool_choice = "auto";
+      }
+      const resp = await fetch(`${this.baseURL}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${this.apiKey}`
+        },
+        body: JSON.stringify(body)
+      });
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => "");
+        throw new Error(`[shift/openai-compat] ${resp.status}: ${text.slice(0, 200)}`);
+      }
+      const data = await resp.json();
+      const choice = data.choices[0];
+      if (!choice) break;
+      const { message, finish_reason } = choice;
+      if (message.content) responseText = message.content;
+      if (finish_reason !== "tool_calls" || !message.tool_calls || !toolExecutor) break;
+      const assistantMsg = {
+        role: "assistant",
+        content: message.content,
+        tool_calls: message.tool_calls
+      };
+      currentMessages = [...currentMessages, assistantMsg];
+      for (const call of message.tool_calls) {
+        toolsInvoked.push(call.function.name);
+        let result;
+        try {
+          const input = JSON.parse(call.function.arguments);
+          result = await toolExecutor(call.function.name, input);
+        } catch (err) {
+          result = { error: String(err) };
+        }
+        currentMessages = [
+          ...currentMessages,
+          {
+            role: "tool",
+            content: JSON.stringify(result),
+            tool_call_id: call.id
+          }
+        ];
+      }
+    }
+    return { text: responseText, toolsInvoked };
+  }
+  async *stream(opts) {
+    const { system, messages, maxTokens = 1024 } = opts;
+    const resp = await fetch(`${this.baseURL}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${this.apiKey}`
+      },
+      body: JSON.stringify({
+        model: this.modelId,
+        max_tokens: maxTokens,
+        stream: true,
+        messages: [
+          { role: "system", content: system },
+          ...messages.map((m) => ({ role: m.role, content: m.content }))
+        ]
+      })
+    });
+    if (!resp.ok || !resp.body) {
+      throw new Error(`[shift/openai-compat] stream ${resp.status}`);
+    }
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        const trimmed = line.replace(/^data: /, "").trim();
+        if (!trimmed || trimmed === "[DONE]") continue;
+        try {
+          const chunk = JSON.parse(trimmed);
+          const delta = chunk.choices[0]?.delta?.content;
+          if (delta) yield delta;
+        } catch {
+        }
+      }
+    }
+  }
+};
+function OllamaProvider(model, baseURL = "http://localhost:11434/v1") {
+  return new OpenAICompatProvider({
+    baseURL,
+    model,
+    apiKey: "ollama",
+    providerName: `ollama/${model}`
+  });
+}
+
+// src/providers/router.ts
+var RouterProvider = class {
+  constructor(config) {
+    this.config = config;
+    this.name = `router(${config.primary.name})`;
+    this.modelId = config.primary.modelId;
+  }
+  async complete(opts) {
+    const { primary, fallback, shadow, canary, canaryPercent, onRoute } = this.config;
+    let activeProvider = primary;
+    let reason = "primary";
+    if (canary && canaryPercent && canaryPercent > 0) {
+      if (Math.random() * 100 < canaryPercent) {
+        activeProvider = canary;
+        reason = "canary";
+      }
+    }
+    onRoute?.({
+      provider: activeProvider.name,
+      reason,
+      shadowProvider: shadow?.name
+    });
+    if (shadow && shadow !== activeProvider) {
+      shadow.complete(opts).catch(() => {
+      });
+    }
+    try {
+      return await activeProvider.complete(opts);
+    } catch (err) {
+      if (fallback && fallback !== activeProvider) {
+        onRoute?.({ provider: fallback.name, reason: "fallback" });
+        return fallback.complete(opts);
+      }
+      throw err;
+    }
+  }
+  async *stream(opts) {
+    const { primary, fallback } = this.config;
+    try {
+      yield* primary.stream(opts);
+    } catch {
+      if (fallback) {
+        yield* fallback.stream(opts);
+      }
+    }
+  }
+};
+
+// src/training.ts
+function exportForFineTuning(pairs, format, systemPrompt) {
+  switch (format) {
+    case "openai":
+      return exportOpenAI(pairs, systemPrompt);
+    case "anthropic":
+      return exportAnthropic(pairs, systemPrompt);
+    case "hf":
+      return exportHuggingFace(pairs, systemPrompt);
+  }
+}
+function toJSONL(records) {
+  return records.map((r) => JSON.stringify(r)).join("\n");
+}
+function exportOpenAI(pairs, system) {
+  return toJSONL(
+    pairs.map((p) => ({
+      messages: [
+        ...system ? [{ role: "system", content: system }] : [],
+        ...p.messages,
+        // If the user edited the response, the edited version is the ground truth
+        ...p.editedResponse ? [{ role: "assistant", content: p.editedResponse }] : []
+      ].filter((_, i, arr) => {
+        if (p.editedResponse && arr[i].role === "assistant" && i < arr.length - 1) return false;
+        return true;
+      })
+    }))
+  );
+}
+function exportAnthropic(pairs, system) {
+  return toJSONL(
+    pairs.map((p) => ({
+      system: system ?? "",
+      messages: p.messages.map((m) => ({
+        role: m.role,
+        content: m.content
+      }))
+    }))
+  );
+}
+function exportHuggingFace(pairs, system) {
+  return toJSONL(
+    pairs.map((p) => {
+      const systemPart = system ? `<|system|>
+${system}
+` : "";
+      const userPart = `<|user|>
+${p.messages.find((m) => m.role === "user")?.content ?? ""}
+`;
+      const assistantContent = p.editedResponse ?? p.messages.find((m) => m.role === "assistant")?.content ?? "";
+      const assistantPart = `<|assistant|>
+${assistantContent}`;
+      return { text: systemPart + userPart + assistantPart };
+    })
+  );
+}
+
+export { AnthropicProvider, EMBED_DIM, NoOpContextGraph, NoOpGenomeStore, OllamaProvider, OpenAICompatProvider, RouterProvider, ShiftBrain, ToolRegistry, VoyageEmbeddingProvider, buildSystemPrompt, centroid, cosineSimilarity, definePersona, exportForFineTuning, formatCollectiveIntelligenceForPrompt, formatCrossProductContextForPrompt, formatMemoriesForPrompt, formatPreferencesForPrompt, greedyCluster, recordMemory, retrieveRelevantMemories };
 //# sourceMappingURL=index.js.map
 //# sourceMappingURL=index.js.map

@@ -1,4 +1,5 @@
 import type { ShiftTool, ToolContext, ToolInputSchema } from './types.js';
+import type { ProviderTool } from './model.js';
 
 export class ToolRegistry {
   private readonly _tools = new Map<string, ShiftTool>();
@@ -22,6 +23,15 @@ export class ToolRegistry {
       name,
       description,
       input_schema,
+    }));
+  }
+
+  /** Returns tool definitions in the provider-agnostic ProviderTool format. */
+  providerDefinitions(): ProviderTool[] {
+    return this.all().map(({ name, description, input_schema }) => ({
+      name,
+      description,
+      parameters: input_schema,
     }));
   }
 

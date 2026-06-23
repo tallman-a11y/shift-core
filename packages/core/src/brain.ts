@@ -1,4 +1,3 @@
-import Anthropic from '@anthropic-ai/sdk';
 import { buildSystemPrompt } from './persona.js';
 import { recordMemory, retrieveRelevantMemories, formatMemoriesForPrompt } from './memory.js';
 import { ToolRegistry } from './tools.js';
@@ -7,6 +6,8 @@ import type { FeedbackSignal, FeedbackEntry, OutcomeRecord } from './learning.js
 import { formatCrossProductContextForPrompt } from './graph.js';
 import { formatCollectiveIntelligenceForPrompt } from './genome.js';
 import type { CollectivePattern } from './genome.js';
+import { AnthropicProvider } from './providers/anthropic.js';
+import type { ModelProvider } from './model.js';
 import type {
   BrainConfig,
   ThinkOpts,
@@ -15,7 +16,6 @@ import type {
   MemoryEntry,
 } from './types.js';
 
-const DEFAULT_MODEL = 'claude-sonnet-4-6';
 const DEFAULT_MAX_TOKENS = 1024;
 
 /**
@@ -41,13 +41,17 @@ const DEFAULT_MAX_TOKENS = 1024;
  * ```
  */
 export class ShiftBrain {
-  private readonly client: Anthropic;
+  private readonly provider: ModelProvider;
   private readonly registry: ToolRegistry;
   private readonly config: BrainConfig;
 
   constructor(config: BrainConfig) {
     this.config = config;
-    this.client = new Anthropic({ apiKey: config.anthropicApiKey });
+    // Use explicitly provided provider, or auto-create AnthropicProvider for
+    // backward compatibility when only anthropicApiKey is set.
+    this.provider =
+      config.provider ??
+      new AnthropicProvider(config.anthropicApiKey!, config.model);
     this.registry = new ToolRegistry();
     for (const tool of config.tools ?? []) {
       this.registry.register(tool);
@@ -57,7 +61,7 @@ export class ShiftBrain {
   /** Main entry point: think through a user message and return a response. */
   async think(opts: ThinkOpts): Promise<ThinkResult> {
     const { userId, message, history = [], messageId } = opts;
-    const { persona, embedding, memory, knowledge, model, maxTokens, learning, contextGraph, genome, product } = this.config;
+    const { persona, embedding, memory, maxTokens, learning, contextGraph, genome, product } = this.config;
 
     // 1. Recall relevant memories.
     let memories: MemoryEntry[] = [];
@@ -100,69 +104,26 @@ export class ShiftBrain {
     const combinedContextBlock = memoryBlock + prefsBlock + crossProductBlock + collectiveBlock;
     const systemPrompt = buildSystemPrompt(persona, combinedContextBlock);
 
-    // 5. Build messages array.
-    const messages: Anthropic.Messages.MessageParam[] = [
-      ...history.map((t) => ({ role: t.role, content: t.content } as Anthropic.Messages.MessageParam)),
-      { role: 'user', content: message },
+    // 5. Build provider-agnostic messages.
+    const providerMessages = [
+      ...history.map((t) => ({ role: t.role, content: t.content })),
+      { role: 'user' as const, content: message },
     ];
 
-    // 6. Agentic tool loop.
+    // 6. Delegate to provider — it handles the agentic tool loop internally.
     const toolsInvoked: string[] = [];
-    let responseText = '';
-
-    const tools = this.registry.definitions();
-    let currentMessages = messages;
-
-    while (true) {
-      const response = await this.client.messages.create({
-        model: model ?? DEFAULT_MODEL,
-        max_tokens: maxTokens ?? DEFAULT_MAX_TOKENS,
-        system: systemPrompt,
-        messages: currentMessages,
-        ...(tools.length > 0 ? { tools } : {}),
-      });
-
-      // Collect text from this turn.
-      const textBlocks = response.content.filter((b): b is Anthropic.Messages.TextBlock => b.type === 'text');
-      if (textBlocks.length) {
-        responseText = textBlocks.map((b) => b.text).join('');
-      }
-
-      // No tool calls — we're done.
-      if (response.stop_reason !== 'tool_use') break;
-
-      // Execute tool calls.
-      const toolUseBlocks = response.content.filter(
-        (b): b is Anthropic.Messages.ToolUseBlock => b.type === 'tool_use',
-      );
-
-      const toolResults: Anthropic.Messages.ToolResultBlockParam[] = [];
-      for (const block of toolUseBlocks) {
-        toolsInvoked.push(block.name);
-        let result: unknown;
-        try {
-          result = await this.registry.execute(
-            block.name,
-            block.input as Record<string, unknown>,
-            { userId },
-          );
-        } catch (err) {
-          result = { error: String(err) };
-        }
-        toolResults.push({
-          type: 'tool_result',
-          tool_use_id: block.id,
-          content: JSON.stringify(result),
-        });
-      }
-
-      // Feed tool results back for the next turn.
-      currentMessages = [
-        ...currentMessages,
-        { role: 'assistant', content: response.content },
-        { role: 'user', content: toolResults },
-      ];
-    }
+    const providerResponse = await this.provider.complete({
+      system: systemPrompt,
+      messages: providerMessages,
+      tools: this.registry.providerDefinitions(),
+      toolExecutor: async (name, input) => {
+        toolsInvoked.push(name);
+        return this.registry.execute(name, input, { userId });
+      },
+      maxTokens: maxTokens ?? DEFAULT_MAX_TOKENS,
+    });
+    const responseText = providerResponse.text;
+    toolsInvoked.push(...providerResponse.toolsInvoked.filter(n => !toolsInvoked.includes(n)));
 
     // 7. Mark cross-product events as consumed.
     if (contextGraph && pendingEvents.length > 0) {
@@ -288,7 +249,7 @@ export class ShiftBrain {
   /** Stream a response. Returns an async iterable of text deltas. */
   async *stream(opts: ThinkOpts): AsyncIterable<string> {
     const { userId, message, history = [] } = opts;
-    const { persona, embedding, memory, model, maxTokens, learning, contextGraph, genome, product } = this.config;
+    const { persona, embedding, memory, maxTokens, learning, contextGraph, genome, product } = this.config;
 
     // 1. Recall relevant memories.
     let memories: MemoryEntry[] = [];
@@ -329,31 +290,21 @@ export class ShiftBrain {
 
     const systemPrompt = buildSystemPrompt(persona, combinedContextBlock);
 
-    const messages: Anthropic.Messages.MessageParam[] = [
-      ...history.map((t) => ({ role: t.role, content: t.content } as Anthropic.Messages.MessageParam)),
-      { role: 'user', content: message },
-    ];
-
     // 5. Mark cross-product events as consumed before streaming starts.
     if (contextGraph && pendingEvents.length > 0) {
       await contextGraph.markConsumed(pendingEvents.map(e => e.id));
     }
 
-    const stream = this.client.messages.stream({
-      model: model ?? DEFAULT_MODEL,
-      max_tokens: maxTokens ?? DEFAULT_MAX_TOKENS,
-      system: systemPrompt,
-      messages,
-    });
+    const providerMessages = [
+      ...history.map((t) => ({ role: t.role, content: t.content })),
+      { role: 'user' as const, content: message },
+    ];
 
-    for await (const event of stream) {
-      if (
-        event.type === 'content_block_delta' &&
-        event.delta.type === 'text_delta'
-      ) {
-        yield event.delta.text;
-      }
-    }
+    yield* this.provider.stream({
+      system: systemPrompt,
+      messages: providerMessages,
+      maxTokens: maxTokens ?? DEFAULT_MAX_TOKENS,
+    });
   }
 
   /** Register an additional tool at runtime. */

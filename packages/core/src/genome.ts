@@ -1,5 +1,6 @@
 import type { EmbeddingProvider } from './types.js';
 import type { FeedbackSignal } from './learning.js';
+import type { TrainingJob, ModelVersion } from './training.js';
 
 // ── Collective Intelligence ───────────────────────────────────────────────────
 
@@ -95,6 +96,28 @@ export interface GenomeStore {
     since?: Date,
     limit?: number,
   ): Promise<FineTuningPair[]>;
+
+  /**
+   * Record that a fine-tuning job was submitted.
+   * Returns the stored job ID for future status updates.
+   */
+  recordTrainingJob(job: TrainingJob): Promise<string | null>;
+
+  /**
+   * Update the status or result of a previously submitted training job.
+   */
+  updateTrainingJob(id: string, updates: Partial<TrainingJob>): Promise<void>;
+
+  /**
+   * Get the currently active (production or canary) model version for a domain.
+   * Returns null when no fine-tuned model is deployed yet (brain uses base provider).
+   */
+  getActiveModelVersion(domain: string): Promise<ModelVersion | null>;
+
+  /**
+   * Record a new model version. Used when deploying a fine-tuned model.
+   */
+  recordModelVersion(version: ModelVersion): Promise<string | null>;
 }
 
 // ── No-op default ─────────────────────────────────────────────────────────────
@@ -104,6 +127,10 @@ export class NoOpGenomeStore implements GenomeStore {
   async getCollectivePatterns(): Promise<CollectivePattern[]> { return []; }
   async distill(): Promise<number> { return 0; }
   async exportFineTuningData(): Promise<FineTuningPair[]> { return []; }
+  async recordTrainingJob(): Promise<string | null> { return null; }
+  async updateTrainingJob(): Promise<void> {}
+  async getActiveModelVersion(): Promise<ModelVersion | null> { return null; }
+  async recordModelVersion(): Promise<string | null> { return null; }
 }
 
 // ── Prompt formatting ─────────────────────────────────────────────────────────

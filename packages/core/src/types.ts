@@ -109,7 +109,18 @@ export interface ConversationTurn {
 
 export interface BrainConfig {
   persona: ShiftPersona;
-  anthropicApiKey: string;
+  /**
+   * Explicit model provider. When set, anthropicApiKey and model are ignored.
+   * Use AnthropicProvider (default), OpenAICompatProvider, OllamaProvider,
+   * RouterProvider, or any custom ModelProvider implementation.
+   *
+   * The independence path:
+   *   provider: new OpenAICompatProvider({ baseURL: 'http://your-gpu/v1', model: 'shift-v1', apiKey: '...' })
+   */
+  provider?: import('./model.js').ModelProvider;
+  /** Convenience: auto-creates AnthropicProvider when provider is not set. */
+  anthropicApiKey?: string;
+  /** Model override for the auto-created AnthropicProvider. Ignored when provider is set. */
   model?: string;
   maxTokens?: number;
   embedding?: EmbeddingProvider;

@@ -53,3 +53,15 @@ export {
   greedyCluster,
   centroid,
 } from './genome.js';
+
+// Model provider abstraction — the independence layer
+export type { ModelProvider, ProviderMessage, ProviderResponse, ProviderTool, ToolExecutor } from './model.js';
+export { AnthropicProvider } from './providers/anthropic.js';
+export { OpenAICompatProvider, OllamaProvider } from './providers/openai-compat.js';
+export type { OpenAICompatConfig } from './providers/openai-compat.js';
+export { RouterProvider } from './providers/router.js';
+export type { RouterConfig, RouteDecision } from './providers/router.js';
+
+// Training pipeline — fine-tuning export + model version tracking
+export type { TrainingJob, ModelVersion, FineTuningFormat } from './training.js';
+export { exportForFineTuning } from './training.js';
