@@ -65,3 +65,7 @@ export type { RouterConfig, RouteDecision } from './providers/router.js';
 // Training pipeline — fine-tuning export + model version tracking
 export type { TrainingJob, ModelVersion, FineTuningFormat } from './training.js';
 export { exportForFineTuning } from './training.js';
+
+// Voice — Will TTS with the shared family cache (synthesize once, replay free everywhere)
+export type { SpeakConfig, SpeakResult } from './voice.js';
+export { synthesizeSpeech, speakConfigFromEnv, WILL_VOICE_ID } from './voice.js';
