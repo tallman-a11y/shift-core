@@ -18,6 +18,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import crypto from "node:crypto";
 import { execSync } from "node:child_process";
 
 const argv = process.argv.slice(2);
@@ -262,5 +263,48 @@ async function cmdStatus() {
   console.log(rows.map((r) => statusLine(r, !!product && product !== "all")).join("\n"));
 }
 
-const table = { log: cmdLog, catchup: cmdCatchup, timeline: cmdTimeline, resolve: cmdResolve, status: cmdStatus, board: cmdStatus };
+// The local agent-memory dir, derived from HOME so it resolves on ANY machine/username
+// (Claude encodes the project path as e.g. C:\Users\tyler → C--Users-tyler).
+function memoryDir() {
+  const enc = os.homedir().replace(/:/g, "-").replace(/[\\/]+/g, "-");
+  return path.join(os.homedir(), ".claude", "projects", enc, "memory");
+}
+
+// Push the local memory to the cloud (shift-brain) so a restore always gets the LATEST,
+// not a stale drive snapshot. Skips when unchanged (hash) — cheap to call every turn.
+async function cmdMemoryPush() {
+  const dir = memoryDir();
+  let names = [];
+  try { names = fs.readdirSync(dir).filter((f) => f.endsWith(".md")); } catch { return has("quiet") ? undefined : die("no memory dir at " + dir); }
+  const files = {};
+  for (const n of names) { try { files[n] = fs.readFileSync(path.join(dir, n), "utf8"); } catch { /* skip */ } }
+  const hash = crypto.createHash("sha256").update(JSON.stringify(Object.keys(files).sort().map((k) => [k, files[k]]))).digest("hex");
+  const stateFile = path.join(os.homedir(), ".claude", "shift-parking-lot", ".memstate");
+  let last = {}; try { last = JSON.parse(fs.readFileSync(stateFile, "utf8")); } catch { /* none */ }
+  if (!has("force") && last.hash === hash) { if (!has("quiet")) console.log("memory unchanged — skip"); return; }
+  await sb("agent_memory_backup", { method: "POST", headers: { Prefer: "resolution=merge-duplicates,return=minimal" }, body: JSON.stringify({ id: 1, files, file_count: names.length, hash, updated_by: agentLabel(), updated_at: new Date().toISOString() }) });
+  try { fs.writeFileSync(stateFile, JSON.stringify({ hash, at: new Date().toISOString() })); } catch { /* ignore */ }
+  if (!has("quiet")) console.log(`memory pushed: ${names.length} files (${hash.slice(0, 8)})`);
+}
+
+// Restore the latest memory from the cloud into the machine's memory dir.
+async function cmdMemoryPull() {
+  const rows = await sb("agent_memory_backup?id=eq.1&select=files,file_count,updated_at,updated_by");
+  const row = Array.isArray(rows) ? rows[0] : null;
+  if (!row || !row.files) return console.log("no cloud memory backup yet");
+  const dir = memoryDir();
+  fs.mkdirSync(dir, { recursive: true });
+  let n = 0;
+  for (const [name, content] of Object.entries(row.files)) {
+    if (name.includes("..") || name.includes("/") || name.includes("\\")) continue; // safety
+    fs.writeFileSync(path.join(dir, name), content); n++;
+  }
+  console.log(`memory pulled: ${n} files → ${dir}\n(backup from ${row.updated_at} by ${row.updated_by})`);
+}
+
+const table = {
+  log: cmdLog, catchup: cmdCatchup, timeline: cmdTimeline, resolve: cmdResolve,
+  status: cmdStatus, board: cmdStatus,
+  "memory-push": cmdMemoryPush, "memory-pull": cmdMemoryPull,
+};
 (table[cmd] || (() => die(`unknown command "${cmd}". Use: log | catchup | timeline | resolve`)))();

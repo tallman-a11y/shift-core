@@ -19,16 +19,19 @@ const map = [
   [/shapeshift/, "shapeshift"], [/finshift/, "finshift"], [/marketshift|surgeshift/, "surgeshift"],
   [/t1care|sugarshift/, "sugarshift"], [/shift-core/, "shift-core"], [/allshift/, "allshift"],
 ];
+const script = path.join(os.homedir(), ".claude", "shift-parking-lot", "shiftlog.mjs");
+const fire = (args) => { try { spawn(process.execPath, [script, ...args], { detached: true, stdio: "ignore" }).unref(); } catch { /* ignore */ } };
+
+// ALWAYS back up memory to the cloud (global, not per-repo) — skips when unchanged, so
+// the latest brain is always recoverable even after total machine loss. Then, if we're
+// in a Shift repo, also sync the git state into product_status.
+fire(["memory-push", "--quiet"]);
+
 let product = null;
 for (const [re, n] of map) { if (re.test(p)) { product = n; break; } }
 if (!product) process.exit(0);
-
 try {
   if (execSync("git rev-parse --is-inside-work-tree", { stdio: ["ignore", "pipe", "ignore"], timeout: 5000 }).toString().trim() !== "true") process.exit(0);
 } catch { process.exit(0); }
-
-try {
-  const script = path.join(os.homedir(), ".claude", "shift-parking-lot", "shiftlog.mjs");
-  spawn(process.execPath, [script, "status", "--set", "--product", product], { detached: true, stdio: "ignore" }).unref();
-} catch { /* ignore */ }
+fire(["status", "--set", "--product", product]);
 process.exit(0);
