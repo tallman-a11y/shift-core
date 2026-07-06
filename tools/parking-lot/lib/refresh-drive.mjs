@@ -7,21 +7,25 @@ import os from "node:os";
 import path from "node:path";
 import { execSync } from "node:child_process";
 
-function findDrive() {
-  const cands = [];
-  for (let c = 68; c <= 90; c++) cands.push(`${String.fromCharCode(c)}:\\SHIFT-MASTER-KEY`); // D..Z (external)
-  cands.push(path.join(os.homedir(), "SHIFT-MASTER-KEY")); // staging fallback
-  for (const d of cands) { try { if (fs.existsSync(path.join(d, "build-master-key.mjs"))) return d; } catch { /* skip */ } }
-  return null;
+// Return EVERY master-key copy present — the local one plus any plugged-in drive(s).
+// Refreshing them all = redundant, always-current backups (two beats one).
+function findDrives() {
+  const found = [];
+  for (let c = 68; c <= 90; c++) { const d = `${String.fromCharCode(c)}:\\SHIFT-MASTER-KEY`; try { if (fs.existsSync(path.join(d, "build-master-key.mjs"))) found.push(d); } catch { /* skip */ } }
+  const local = path.join(os.homedir(), "SHIFT-MASTER-KEY");
+  try { if (fs.existsSync(path.join(local, "build-master-key.mjs"))) found.push(local); } catch { /* skip */ }
+  return found;
 }
 
 function once() {
-  const drive = findDrive();
-  if (!drive) { console.log("[refresh] no master-key drive found - skipping"); return; }
-  try {
-    console.log(`[refresh] refreshing ${drive} @ ${new Date().toISOString()}`);
-    execSync(`node "${path.join(drive, "build-master-key.mjs")}"`, { stdio: "inherit", timeout: 900000 });
-  } catch (e) { console.error("[refresh] failed:", e.message); }
+  const drives = findDrives();
+  if (!drives.length) { console.log("[refresh] no master-key copy found - skipping"); return; }
+  for (const drive of drives) {
+    try {
+      console.log(`[refresh] refreshing ${drive} @ ${new Date().toISOString()}`);
+      execSync(`node "${path.join(drive, "build-master-key.mjs")}"`, { stdio: "inherit", timeout: 900000 });
+    } catch (e) { console.error(`[refresh] ${drive} failed:`, e.message); }
+  }
 }
 
 // --daemon: run forever, refreshing every 30 min (started at logon; no admin needed).
