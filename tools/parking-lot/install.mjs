@@ -33,7 +33,7 @@ function copy(src, dst) {
 
 // 1) helper + hooks
 fs.mkdirSync(PL, { recursive: true });
-for (const f of ["shiftlog.mjs", "session-start-hook.mjs", "bash-capture-hook.mjs", "status-sync-hook.mjs"]) {
+for (const f of ["shiftlog.mjs", "session-start-hook.mjs", "bash-capture-hook.mjs", "status-sync-hook.mjs", "refresh-drive.mjs"]) {
   copy(path.join(HERE, "lib", f), path.join(PL, f));
 }
 // 2) skills
