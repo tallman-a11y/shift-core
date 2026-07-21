@@ -28,3 +28,12 @@ export type { PageTransitionProps } from "./PageTransition";
 
 export { ACCENT_RGB } from "./accents";
 export type { Accent } from "./accents";
+
+// The stateful living-canvas ENGINE — the free-floating window manager (add/tile,
+// snap-assist, drag/resize, session persistence). Brand-neutral: the host app
+// injects `resolveBlock` (its block-registry lookup) and reads `block.context`.
+// Shared so every Shift app's canvas behaves identically.
+export { CanvasProvider, useCanvas, GAP, DEFAULT_H, MIN_W, MIN_H, WIDTH_SPAN, tallH } from "./CanvasProvider";
+export type {
+  CanvasBlock, SavedBlock, SnapLayout, SnapBox, SnapPreview, SnapGhost, BlockWidth, ResolveBlock,
+} from "./CanvasProvider";
