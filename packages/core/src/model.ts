@@ -30,6 +30,11 @@ export interface ProviderResponse {
   text: string;
   /** Names of every tool called during this completion, in order. */
   toolsInvoked: string[];
+  /**
+   * Token usage summed across the whole completion (including every round of
+   * the agentic tool loop). Optional: providers that can't report usage omit it.
+   */
+  usage?: { inputTokens: number; outputTokens: number };
 }
 
 // ── Core interface ────────────────────────────────────────────────────────────

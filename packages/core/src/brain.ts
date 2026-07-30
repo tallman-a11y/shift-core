@@ -125,6 +125,18 @@ export class ShiftBrain {
     const responseText = providerResponse.text;
     toolsInvoked.push(...providerResponse.toolsInvoked.filter(n => !toolsInvoked.includes(n)));
 
+    // Spend telemetry — best-effort, never blocks or breaks the response.
+    if (this.config.onUsage && providerResponse.usage) {
+      try {
+        this.config.onUsage({
+          inputTokens: providerResponse.usage.inputTokens,
+          outputTokens: providerResponse.usage.outputTokens,
+          provider: this.provider.name,
+          model: this.provider.modelId,
+        });
+      } catch { /* telemetry failures are invisible by design */ }
+    }
+
     // 7. Mark cross-product events as consumed.
     if (contextGraph && pendingEvents.length > 0) {
       await contextGraph.markConsumed(pendingEvents.map(e => e.id));

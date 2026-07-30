@@ -793,8 +793,656 @@ function PageTransition({ children, className }) {
   );
 }
 
+// src/canvas/CanvasProvider.tsx
+import { createContext, useCallback, useContext, useEffect as useEffect6, useMemo as useMemo2, useRef as useRef6, useState as useState6 } from "react";
+import { jsx as jsx11 } from "react/jsx-runtime";
+var GAP = 20;
+var DEFAULT_H = 420;
+var MIN_W = 240;
+var MIN_H = 200;
+var WIDTH_SPAN = {
+  sm: 4,
+  // 1/3
+  md: 6,
+  // 1/2
+  lg: 8,
+  // 2/3
+  xl: 12
+  // full
+};
+var CanvasContext = createContext(null);
+function useCanvas() {
+  const ctx = useContext(CanvasContext);
+  if (!ctx) throw new Error("useCanvas must be used inside <CanvasProvider>");
+  return ctx;
+}
+var _seq = 0;
+function nextId() {
+  return `blk-${Date.now()}-${_seq++}`;
+}
+function blockFromSaved(s, z) {
+  const sb = typeof s === "string" ? { key: s } : s;
+  const hasCoords = typeof sb.x === "number" && typeof sb.y === "number" && typeof sb.w === "number";
+  return {
+    id: nextId(),
+    key: sb.key,
+    width: sb.width,
+    z,
+    placed: hasCoords,
+    x: sb.x ?? 0,
+    y: sb.y ?? 0,
+    w: sb.w ?? 0,
+    h: sb.h ?? DEFAULT_H
+  };
+}
+function colWidth(boardW) {
+  return (boardW - GAP * 11) / 12;
+}
+function pxWidth(weight, boardW) {
+  return Math.max(MIN_W, weight * colWidth(boardW) + (weight - 1) * GAP);
+}
+function tallH(boardH) {
+  return Math.max(460, boardH - 150);
+}
+function carveAround(zone, locked) {
+  const hit = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  let r = { ...zone };
+  for (let i = 0; i < locked.length + 2; i++) {
+    const L = locked.find((l) => hit(r, l));
+    if (!L) break;
+    const ix = Math.max(r.x, L.x), iy = Math.max(r.y, L.y);
+    const ir = Math.min(r.x + r.w, L.x + L.w), ib = Math.min(r.y + r.h, L.y + L.h);
+    const slabs = [
+      { x: r.x, y: r.y, w: ix - r.x, h: r.h },
+      // left of the locked block
+      { x: ir, y: r.y, w: r.x + r.w - ir, h: r.h },
+      // right of it
+      { x: r.x, y: r.y, w: r.w, h: iy - r.y },
+      // above it
+      { x: r.x, y: ib, w: r.w, h: r.y + r.h - ib }
+      // below it
+    ].filter((s) => s.w > 1 && s.h > 1);
+    if (slabs.length === 0) break;
+    r = slabs.reduce((a, b) => a.w * a.h >= b.w * b.h ? a : b);
+  }
+  return r;
+}
+function zoneBlocked(c, locked) {
+  if (c.w < MIN_W || c.h < MIN_H) return true;
+  return locked.some((L) => c.x < L.x + L.w && c.x + c.w > L.x && c.y < L.y + L.h && c.y + c.h > L.y);
+}
+function snapZones(boardW, H) {
+  const halfW = Math.round((boardW - GAP) / 2);
+  const halfH = Math.round((H - GAP) / 2);
+  const rightX = boardW - halfW;
+  const bottomY = H - halfH;
+  return {
+    full: { x: 0, y: 0, w: boardW, h: H },
+    left: { x: 0, y: 0, w: halfW, h: H },
+    right: { x: rightX, y: 0, w: halfW, h: H },
+    top: { x: 0, y: 0, w: boardW, h: halfH },
+    bottom: { x: 0, y: bottomY, w: boardW, h: halfH },
+    tl: { x: 0, y: 0, w: halfW, h: halfH },
+    tr: { x: rightX, y: 0, w: halfW, h: halfH },
+    bl: { x: 0, y: bottomY, w: halfW, h: halfH },
+    br: { x: rightX, y: bottomY, w: halfW, h: halfH }
+  };
+}
+function tileRect(items, region) {
+  const n = items.length;
+  if (n === 0) return items;
+  const rows = Math.ceil(n / 2);
+  const rowH = Math.max(MIN_H, Math.round((region.h - GAP * (rows - 1)) / rows));
+  const halfW = Math.round((region.w - GAP) / 2);
+  const single = region.w < MIN_W * 2 + GAP;
+  return items.map((it, i) => {
+    if (single) {
+      const h = Math.max(MIN_H, Math.round((region.h - GAP * (n - 1)) / n));
+      return { ...it, x: region.x, y: region.y + i * (h + GAP), w: Math.max(MIN_W, region.w), h, placed: true };
+    }
+    const row = Math.floor(i / 2);
+    const lastOdd = row === rows - 1 && n % 2 === 1;
+    const y = region.y + row * (rowH + GAP);
+    const w = lastOdd ? region.w : halfW;
+    const x = lastOdd ? region.x : region.x + i % 2 * (halfW + GAP);
+    return { ...it, x, y, w: Math.max(MIN_W, w), h: rowH, placed: true };
+  });
+}
+function bestComplement(z, boardW, H) {
+  const cands = [
+    { x: z.x + z.w + GAP, y: 0, w: boardW - (z.x + z.w + GAP), h: H },
+    // right of zone
+    { x: 0, y: 0, w: z.x - GAP, h: H },
+    // left of zone
+    { x: 0, y: z.y + z.h + GAP, w: boardW, h: H - (z.y + z.h + GAP) },
+    // below zone
+    { x: 0, y: 0, w: boardW, h: z.y - GAP }
+    // above zone
+  ].filter((c) => c.w >= MIN_W && c.h >= MIN_H);
+  if (cands.length === 0) return null;
+  return cands.reduce((a, b) => a.w * a.h >= b.w * b.h ? a : b);
+}
+function computeSnap(blocks, id, layout, boardW, H) {
+  const target = blocks.find((b) => b.id === id);
+  if (!target || target.locked) return null;
+  const zone = snapZones(boardW, H)[layout];
+  const locked = blocks.filter((b) => b.id !== id && b.locked);
+  const tRect = carveAround(zone, locked);
+  if (zoneBlocked(tRect, locked)) return null;
+  const placements = /* @__PURE__ */ new Map();
+  placements.set(id, { x: Math.round(tRect.x), y: Math.round(tRect.y), w: Math.max(MIN_W, Math.round(tRect.w)), h: Math.max(MIN_H, Math.round(tRect.h)) });
+  const others = blocks.filter((b) => b.id !== id && !b.locked);
+  if (others.length > 0) {
+    const comp = bestComplement(zone, boardW, H);
+    if (comp) {
+      const region = carveAround(comp, locked);
+      if (region.w >= MIN_W && region.h >= MIN_H) {
+        tileRect(others, region).forEach((o) => placements.set(o.id, { x: Math.round(o.x), y: Math.round(o.y), w: Math.round(o.w), h: Math.round(o.h) }));
+      }
+    }
+  }
+  return placements;
+}
+function tileItems(items, boardW, boardH) {
+  const n = items.length;
+  if (n === 0) return items;
+  const availH = Math.max(MIN_H * 2 + GAP, boardH - 150);
+  const rows = Math.ceil(n / 2);
+  const rowH = Math.max(300, Math.round((availH - GAP * (rows - 1)) / rows));
+  const halfW = Math.round((boardW - GAP) / 2);
+  const single = boardW < 720;
+  return items.map((it, i) => {
+    if (single) {
+      const h = Math.max(MIN_H, Math.round(tallH(boardH) * 0.72));
+      return { ...it, x: 0, y: i * (h + GAP), w: boardW, h };
+    }
+    const row = Math.floor(i / 2);
+    const lastOdd = row === rows - 1 && n % 2 === 1;
+    const y = row * (rowH + GAP);
+    const w = lastOdd ? boardW : halfW;
+    const x = lastOdd ? 0 : i % 2 * (halfW + GAP);
+    return { ...it, x, y, w, h: rowH };
+  });
+}
+function overlaps(a, b) {
+  return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+}
+function pushOut(b, m) {
+  const cands = [
+    { x: m.x - b.w - GAP, y: b.y, d: Math.abs(m.x - b.w - GAP - b.x), ok: m.x - b.w - GAP >= 0 },
+    { x: m.x + m.w + GAP, y: b.y, d: Math.abs(m.x + m.w + GAP - b.x), ok: true },
+    { x: b.x, y: m.y - b.h - GAP, d: Math.abs(m.y - b.h - GAP - b.y), ok: m.y - b.h - GAP >= 0 },
+    { x: b.x, y: m.y + m.h + GAP, d: Math.abs(m.y + m.h + GAP - b.y), ok: true }
+  ].filter((c) => c.ok).sort((p, q) => p.d - q.d);
+  const best = cands[0];
+  return { x: Math.max(0, best.x), y: Math.max(0, best.y) };
+}
+function CanvasProvider({
+  children,
+  resolveBlock,
+  initialKeys = [],
+  initialLayout,
+  addKey = null,
+  persist = false,
+  savedSession
+}) {
+  const resolveRef = useRef6(resolveBlock);
+  useEffect6(() => {
+    resolveRef.current = resolveBlock;
+  }, [resolveBlock]);
+  const resolve = (key) => resolveRef.current(key);
+  const initial = useMemo2(() => {
+    let z = 1;
+    const base = initialLayout ? initialLayout.filter((b) => b && typeof b.key === "string" && resolveRef.current(b.key)).map((b) => blockFromSaved(b, z++)) : initialKeys.filter((k) => resolveRef.current(k)).map((k) => blockFromSaved(k, z++));
+    if (addKey && resolveRef.current(addKey) && !base.some((b) => b.key === addKey)) {
+      base.unshift(blockFromSaved(addKey, z++));
+    }
+    return { base, nextZ: z };
+  }, []);
+  const zRef = useRef6(initial.nextZ);
+  const [blocks, setBlocks] = useState6(initial.base);
+  const [interacting, setInteracting] = useState6(false);
+  const [activeId, setActiveId] = useState6(null);
+  const [snapGhost, setSnapGhost] = useState6(null);
+  const [boardWidth, setBoardWidth] = useState6(1280);
+  const boardRef = useRef6(1280);
+  const boardHRef = useRef6(820);
+  const persistRef = useRef6(persist);
+  useEffect6(() => {
+    persistRef.current = persist;
+  }, [persist]);
+  useEffect6(() => {
+    const measure = () => {
+      const w = Math.max(360, window.innerWidth - 40);
+      boardRef.current = w;
+      boardHRef.current = Math.max(480, window.innerHeight);
+      setBoardWidth(w);
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, []);
+  const layoutDefault = useCallback(
+    (list) => tileItems(list, boardRef.current, boardHRef.current),
+    []
+  );
+  const tiledOnce = useRef6(false);
+  useEffect6(() => {
+    if (tiledOnce.current) return;
+    tiledOnce.current = true;
+    setBlocks((prev) => prev.length === 0 || prev.some((b) => b.placed) ? prev : layoutDefault(prev));
+  }, [boardWidth]);
+  const addBlock = useCallback((key, context, width, append = false) => {
+    if (!resolve(key)) return;
+    const w = width ?? resolve(key)?.defaultWidth;
+    setBlocks((prev) => {
+      const existing = prev.find((b) => b.key === key);
+      const customized = prev.some((b) => b.placed);
+      const without = prev.filter((b) => b.key !== key);
+      if (customized) {
+        if (append) {
+          const startY = without.length ? Math.max(...without.map((b) => b.y + b.h)) + GAP : 0;
+          const nb3 = { id: nextId(), key, context, width: w, locked: existing?.locked, z: zRef.current++, placed: true, x: 0, y: startY, w: boardRef.current, h: tallH(boardHRef.current) };
+          return [...without, nb3];
+        }
+        if (existing?.locked) {
+          return prev.map((b) => b.id === existing.id ? { ...b, z: zRef.current++ } : b);
+        }
+        const boardW = boardRef.current;
+        const H = tallH(boardHRef.current);
+        const nb2 = existing ? { ...existing, z: zRef.current++, placed: true } : { id: nextId(), key, context, width: w, z: zRef.current++, placed: true, x: 0, y: 0, w: 0, h: 0 };
+        if (without.length === 0) return [{ ...nb2, x: 0, y: 0, w: boardW, h: H }];
+        const zone = without.length === 1 ? "left" : "tl";
+        const list2 = [nb2, ...without];
+        const placements = computeSnap(list2, nb2.id, zone, boardW, H);
+        if (placements) {
+          return list2.map((b) => {
+            const p = placements.get(b.id);
+            return p ? { ...b, ...p, placed: true } : b;
+          });
+        }
+        const lockedTop = without.filter((b) => b.locked && b.y < H + GAP);
+        const newY = lockedTop.length ? Math.max(...lockedTop.map((b) => b.y + b.h)) + GAP : 0;
+        const shift = newY + H + GAP;
+        const moved = without.map((b) => b.locked ? b : { ...b, y: b.y + shift });
+        return [{ ...nb2, x: 0, y: newY, w: boardW, h: H }, ...moved];
+      }
+      const nb = existing ? { ...existing, z: zRef.current++ } : { id: nextId(), key, context, width: w, z: zRef.current++, placed: false, x: 0, y: 0, w: 0, h: 0 };
+      const list = append ? [...without, nb] : [nb, ...without];
+      return layoutDefault(list);
+    });
+    if (!append && typeof window !== "undefined") {
+      requestAnimationFrame(() => window.scrollTo({ top: 0, behavior: "smooth" }));
+    }
+  }, [layoutDefault]);
+  const removeBlock = useCallback((id) => {
+    setBlocks((prev) => {
+      const remaining = prev.filter((b) => b.id !== id);
+      return remaining.length > 0 && !remaining.some((b) => b.placed) ? layoutDefault(remaining) : remaining;
+    });
+  }, [layoutDefault]);
+  const resizeBlock = useCallback((id, width) => {
+    setBlocks((prev) => prev.map((b) => b.id === id ? { ...b, width, w: pxWidth(WIDTH_SPAN[width], boardRef.current), placed: true, z: zRef.current++ } : b));
+  }, []);
+  const moveTo = useCallback((id, x, y) => {
+    const boardW = boardRef.current;
+    setBlocks((prev) => prev.map((b) => {
+      if (b.id !== id || b.locked) return b;
+      const nx = Math.max(0, Math.min(Math.round(x), Math.max(0, boardW - b.w)));
+      const ny = Math.max(0, Math.round(y));
+      return { ...b, x: nx, y: ny, placed: true };
+    }));
+  }, []);
+  const sizeTo = useCallback((id, w, h) => {
+    const boardW = boardRef.current;
+    setBlocks((prev) => prev.map((b) => {
+      if (b.id !== id || b.locked) return b;
+      const nw = Math.max(MIN_W, Math.min(Math.round(w), Math.max(MIN_W, boardW - b.x)));
+      const nh = Math.max(MIN_H, Math.round(h));
+      return { ...b, w: nw, h: nh, placed: true };
+    }));
+  }, []);
+  const setRect = useCallback((id, r) => {
+    const boardW = boardRef.current;
+    setBlocks((prev) => prev.map((b) => {
+      if (b.id !== id || b.locked) return b;
+      const nx = Math.max(0, Math.round(r.x));
+      const ny = Math.max(0, Math.round(r.y));
+      let nw = Math.max(MIN_W, Math.round(r.w));
+      const nh = Math.max(MIN_H, Math.round(r.h));
+      if (nx + nw > boardW) nw = Math.max(MIN_W, boardW - nx);
+      return { ...b, x: nx, y: ny, w: nw, h: nh, placed: true };
+    }));
+  }, []);
+  const snapTo = useCallback((id, layout) => {
+    const boardW = boardRef.current;
+    const H = tallH(boardHRef.current);
+    setSnapGhost(null);
+    setBlocks((prev) => {
+      const placements = computeSnap(prev, id, layout, boardW, H);
+      if (!placements) return prev;
+      return prev.map((b) => {
+        const p = placements.get(b.id);
+        if (!p) return b;
+        return { ...b, ...p, placed: true, z: b.id === id ? zRef.current++ : b.z };
+      });
+    });
+  }, []);
+  const snapPreview = useCallback((id, layout) => {
+    const boardW = boardRef.current;
+    const H = tallH(boardHRef.current);
+    const zone = snapZones(boardW, H)[layout];
+    const locked = blocks.filter((b) => b.id !== id && b.locked);
+    const c = carveAround(zone, locked);
+    const box = (r) => ({
+      left: r.x / boardW * 100,
+      top: r.y / H * 100,
+      width: r.w / boardW * 100,
+      height: r.h / H * 100
+    });
+    const placements = computeSnap(blocks, id, layout, boardW, H);
+    const others = placements ? [...placements.entries()].filter(([bid]) => bid !== id).map(([, r]) => box(r)) : [];
+    return { rect: box(c), locked: locked.map((L) => box(L)), others, blocked: zoneBlocked(c, locked) };
+  }, [blocks]);
+  const previewSnap = useCallback((id, layout) => {
+    const boardW = boardRef.current;
+    const H = tallH(boardHRef.current);
+    const placements = computeSnap(blocks, id, layout, boardW, H);
+    if (!placements) {
+      setSnapGhost(null);
+      return;
+    }
+    const target = placements.get(id);
+    if (!target) {
+      setSnapGhost(null);
+      return;
+    }
+    const others = [...placements.entries()].filter(([bid]) => bid !== id).map(([, r]) => r);
+    setSnapGhost({ target, others });
+  }, [blocks]);
+  const clearSnapPreview = useCallback(() => setSnapGhost(null), []);
+  const resizeRow = useCallback((id, x, w, h, origin) => {
+    const boardW = boardRef.current;
+    const M0 = origin.find((b) => b.id === id);
+    if (!M0 || M0.locked) return;
+    const vov = (a, b) => a.y < b.y + b.h && a.y + a.h > b.y;
+    const nh = Math.max(MIN_H, Math.round(h));
+    const packed = /* @__PURE__ */ new Map();
+    let mx = M0.x;
+    let mw;
+    if (Math.round(x) === Math.round(M0.x)) {
+      const rights = origin.filter((b) => b.id !== id && b.x >= M0.x && vov(b, M0)).sort((a, b) => a.x - b.x);
+      const wallIdx = rights.findIndex((b) => b.locked);
+      const wallX = wallIdx >= 0 ? rights[wallIdx].x : boardW + GAP;
+      const pushable = wallIdx >= 0 ? rights.slice(0, wallIdx) : rights;
+      const reserved = pushable.length * (MIN_W + GAP);
+      const mRight = Math.max(M0.x + MIN_W, Math.min(M0.x + Math.round(w), wallX - GAP - reserved));
+      mw = mRight - M0.x;
+      let cursor = mRight + GAP;
+      pushable.forEach((N, i) => {
+        const after = (pushable.length - 1 - i) * (MIN_W + GAP);
+        const nw = Math.max(MIN_W, Math.min(N.w, Math.round(wallX - GAP - cursor - after)));
+        packed.set(N.id, { x: Math.round(cursor), w: nw });
+        cursor += nw + GAP;
+      });
+    } else {
+      const fixedRight = M0.x + M0.w;
+      const lefts = origin.filter((b) => b.id !== id && b.x < M0.x && vov(b, M0)).sort((a, b) => b.x - a.x);
+      const wallIdx = lefts.findIndex((b) => b.locked);
+      const wallRight = wallIdx >= 0 ? lefts[wallIdx].x + lefts[wallIdx].w : -GAP;
+      const pushable = wallIdx >= 0 ? lefts.slice(0, wallIdx) : lefts;
+      const reserved = pushable.length * (MIN_W + GAP);
+      const mLeft = Math.min(fixedRight - MIN_W, Math.max(Math.round(x), wallRight + GAP + reserved));
+      mx = mLeft;
+      mw = fixedRight - mLeft;
+      let cursor = mLeft - GAP;
+      pushable.forEach((N, i) => {
+        const after = (pushable.length - 1 - i) * (MIN_W + GAP);
+        const nw = Math.max(MIN_W, Math.min(N.w, Math.round(cursor - (wallRight + GAP) - after)));
+        const nx = Math.max(wallRight + GAP, Math.round(cursor - nw));
+        packed.set(N.id, { x: nx, w: nw });
+        cursor = nx - GAP;
+      });
+    }
+    setBlocks((prev) => prev.map((b) => {
+      if (b.id === id) return { ...b, x: mx, w: Math.max(MIN_W, mw), h: nh, placed: true };
+      const p = packed.get(b.id);
+      return p ? { ...b, x: p.x, w: p.w, placed: true } : b;
+    }));
+  }, []);
+  const bringToFront = useCallback((id) => {
+    setBlocks((prev) => prev.map((b) => b.id === id ? { ...b, z: zRef.current++ } : b));
+  }, []);
+  const resolveCollisions = useCallback((id) => {
+    setBlocks((prev) => {
+      const moved = prev.find((b) => b.id === id);
+      if (!moved) return prev;
+      const hits = prev.filter((b) => b.id !== id && !b.locked && overlaps(b, moved));
+      if (hits.length === 0) return prev;
+      const cx = moved.x + moved.w / 2;
+      const leftN = hits.filter((b) => b.x + b.w / 2 < cx);
+      const rightN = hits.filter((b) => b.x + b.w / 2 >= cx);
+      if (leftN.length && rightN.length) {
+        const leftEdge = Math.max(...leftN.map((b) => b.x + b.w)) + GAP;
+        const rightEdge = Math.min(...rightN.map((b) => b.x)) - GAP;
+        const gapW = rightEdge - leftEdge;
+        if (gapW >= MIN_W) {
+          return prev.map((b) => b.id === id ? { ...b, x: Math.round(leftEdge), w: Math.round(gapW) } : b);
+        }
+      }
+      const boardW = boardRef.current;
+      let changed = false;
+      const next = prev.map((b) => {
+        if (b.id === id || b.locked || !overlaps(b, moved)) return b;
+        const p = pushOut(b, moved);
+        let nx = p.x;
+        let nw = b.w;
+        if (nx + nw > boardW) nw = Math.max(MIN_W, boardW - nx);
+        if (nx + nw > boardW) nx = Math.max(0, boardW - nw);
+        if (nx === b.x && p.y === b.y && nw === b.w) return b;
+        changed = true;
+        return { ...b, x: nx, y: p.y, w: nw };
+      });
+      return changed ? next : prev;
+    });
+  }, []);
+  const toggleLock = useCallback((id) => {
+    setBlocks((prev) => prev.map((b) => b.id === id ? { ...b, locked: !b.locked } : b));
+  }, []);
+  const restoredRef = useRef6(false);
+  const [canRestore, setCanRestore] = useState6(false);
+  const restoreSession = useCallback(() => {
+    const saved = savedSession?.blocks;
+    if (!saved || saved.length === 0) return;
+    restoredRef.current = true;
+    setCanRestore(false);
+    const built = saved.filter((b) => b && typeof b.key === "string" && resolve(b.key)).map((b) => blockFromSaved(b, zRef.current++));
+    setBlocks(built.some((b) => b.placed) ? built : layoutDefault(built));
+  }, [savedSession, layoutDefault]);
+  const clear = useCallback((keepKey) => {
+    setBlocks((prev) => keepKey ? prev.filter((b) => b.key === keepKey) : []);
+  }, []);
+  useEffect6(() => {
+    function onAdd(e) {
+      const d = e.detail;
+      if (d?.key) addBlock(d.key, d.context, d.width, d.append);
+    }
+    function onClear(e) {
+      const d = e.detail;
+      clear(d?.keepKey);
+    }
+    function onResize(e) {
+      const d = e.detail;
+      if (!d?.key || !d?.width) return;
+      const width = d.width;
+      setBlocks((prev) => {
+        const list = prev.map((b) => b.key === d.key ? { ...b, width } : b);
+        return prev.some((b) => b.placed) ? list : layoutDefault(list);
+      });
+    }
+    function onPlace(e) {
+      const d = e.detail;
+      if (!d?.key || !d?.afterKey) return;
+      setBlocks((prev) => {
+        const srcIdx = prev.findIndex((b) => b.key === d.key);
+        const tgtIdx = prev.findIndex((b) => b.key === d.afterKey);
+        if (srcIdx === -1 || tgtIdx === -1) return prev;
+        const next = [...prev];
+        const [moved] = next.splice(srcIdx, 1);
+        const insertAt = next.findIndex((b) => b.key === d.afterKey) + 1;
+        next.splice(insertAt, 0, moved);
+        return prev.some((b) => b.placed) ? next : layoutDefault(next);
+      });
+    }
+    function onSwap(e) {
+      const d = e.detail;
+      const keys = d?.keys ?? [];
+      const contexts = d?.contexts ?? [];
+      const widths = d?.widths ?? [];
+      const built = keys.filter((k) => resolve(k)).map((key, i) => ({
+        id: nextId(),
+        key,
+        context: contexts[i],
+        width: widths[i] ?? resolve(key)?.defaultWidth,
+        z: zRef.current++,
+        placed: false,
+        x: 0,
+        y: 0,
+        w: 0,
+        h: DEFAULT_H
+      }));
+      setBlocks(layoutDefault(built));
+    }
+    function onRestore() {
+      restoreSession();
+    }
+    window.addEventListener("shift:canvas:add", onAdd);
+    window.addEventListener("shift:canvas:clear", onClear);
+    window.addEventListener("shift:canvas:resize", onResize);
+    window.addEventListener("shift:canvas:place", onPlace);
+    window.addEventListener("shift:canvas:swap", onSwap);
+    window.addEventListener("shift:canvas:restore-session", onRestore);
+    return () => {
+      window.removeEventListener("shift:canvas:add", onAdd);
+      window.removeEventListener("shift:canvas:clear", onClear);
+      window.removeEventListener("shift:canvas:resize", onResize);
+      window.removeEventListener("shift:canvas:place", onPlace);
+      window.removeEventListener("shift:canvas:swap", onSwap);
+      window.removeEventListener("shift:canvas:restore-session", onRestore);
+    };
+  }, [addBlock, clear, layoutDefault, restoreSession]);
+  const localDay = () => {
+    try {
+      return (/* @__PURE__ */ new Date()).toLocaleDateString("en-CA");
+    } catch {
+      return "";
+    }
+  };
+  useEffect6(() => {
+    if (!persist || restoredRef.current) return;
+    const saved = savedSession?.blocks;
+    if (!saved || saved.length === 0) return;
+    if (savedSession?.savedDay && savedSession.savedDay === localDay()) {
+      restoreSession();
+    } else {
+      setCanRestore(true);
+    }
+  }, []);
+  useEffect6(() => {
+    window.dispatchEvent(new CustomEvent("shift:canvas:state", { detail: { count: blocks.length, canRestore } }));
+    return () => {
+      window.dispatchEvent(new CustomEvent("shift:canvas:state", { detail: { count: 0, canRestore: false } }));
+    };
+  }, [blocks.length, canRestore]);
+  const firstRun = useRef6(true);
+  const saveTimer = useRef6(null);
+  const layoutSignature = blocks.map((b) => `${b.key}:${b.width ?? ""}:${Math.round(b.x)}:${Math.round(b.y)}:${Math.round(b.w)}:${Math.round(b.h)}`).join("|");
+  const payload = useMemo2(() => layoutSignature ? {
+    savedDay: localDay(),
+    blocks: layoutSignature.split("|").map((seg) => {
+      const [key, width, x, y, w, h] = seg.split(":");
+      return { key, ...width ? { width } : {}, x: Number(x), y: Number(y), w: Number(w), h: Number(h) };
+    })
+  } : null, [layoutSignature]);
+  const payloadRef = useRef6(payload);
+  useEffect6(() => {
+    payloadRef.current = payload;
+  }, [payload]);
+  useEffect6(() => {
+    if (!persist) return;
+    if (firstRun.current) {
+      firstRun.current = false;
+      return;
+    }
+    if (!payloadRef.current) return;
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    const body = JSON.stringify(payloadRef.current);
+    saveTimer.current = setTimeout(() => {
+      void fetch("/api/canvas-layout", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body
+      }).catch(() => {
+      });
+    }, 700);
+    return () => {
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+    };
+  }, [persist, layoutSignature]);
+  useEffect6(() => {
+    if (!persist) return;
+    const flush = () => {
+      if (!payloadRef.current) return;
+      try {
+        void fetch("/api/canvas-layout", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payloadRef.current),
+          keepalive: true
+        }).catch(() => {
+        });
+      } catch {
+      }
+    };
+    const onHide = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", onHide);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", onHide);
+    };
+  }, [persist]);
+  const api = useMemo2(() => ({
+    blocks,
+    addBlock,
+    removeBlock,
+    resizeBlock,
+    snapTo,
+    snapPreview,
+    previewSnap,
+    clearSnapPreview,
+    snapGhost,
+    moveTo,
+    sizeTo,
+    setRect,
+    resizeRow,
+    bringToFront,
+    resolveCollisions,
+    toggleLock,
+    clear,
+    interacting,
+    setInteracting,
+    activeId,
+    setActiveId,
+    boardWidth
+  }), [blocks, addBlock, removeBlock, resizeBlock, snapTo, snapPreview, previewSnap, clearSnapPreview, snapGhost, moveTo, sizeTo, setRect, resizeRow, bringToFront, resolveCollisions, toggleLock, clear, interacting, activeId, boardWidth]);
+  return /* @__PURE__ */ jsx11(CanvasContext.Provider, { value: api, children });
+}
+
 // src/voice/useHeyShift.ts
-import { useCallback, useEffect as useEffect6, useRef as useRef6, useState as useState6 } from "react";
+import { useCallback as useCallback2, useEffect as useEffect7, useRef as useRef7, useState as useState7 } from "react";
 function getSpeechRecognitionCtor() {
   const w = window;
   return w.SpeechRecognition ?? w.webkitSpeechRecognition;
@@ -807,28 +1455,28 @@ function useHeyShift(config = {}) {
     onCommand,
     onStateChange
   } = config;
-  const [state, setState] = useState6("idle");
-  const [transcript, setTranscript] = useState6("");
-  const [isSupported, setIsSupported] = useState6(false);
-  const recRef = useRef6(null);
-  const silenceTimerRef = useRef6(null);
-  const activeRef = useRef6(false);
-  const accumulatedRef = useRef6("");
-  const stateRef = useRef6("idle");
-  const updateState = useCallback((s) => {
+  const [state, setState] = useState7("idle");
+  const [transcript, setTranscript] = useState7("");
+  const [isSupported, setIsSupported] = useState7(false);
+  const recRef = useRef7(null);
+  const silenceTimerRef = useRef7(null);
+  const activeRef = useRef7(false);
+  const accumulatedRef = useRef7("");
+  const stateRef = useRef7("idle");
+  const updateState = useCallback2((s) => {
     stateRef.current = s;
     setState(s);
     onStateChange?.(s);
   }, [onStateChange]);
-  useEffect6(() => {
+  useEffect7(() => {
     const SR = getSpeechRecognitionCtor();
     setIsSupported(!!(SR && window.speechSynthesis));
   }, []);
-  const getVoice = useCallback(() => {
+  const getVoice = useCallback2(() => {
     const voices = window.speechSynthesis?.getVoices() ?? [];
     return voices.find((v) => v.name.toLowerCase().includes("will")) ?? voices.find((v) => v.name.toLowerCase().includes("daniel")) ?? voices.find((v) => v.lang.startsWith("en") && v.name.toLowerCase().includes("male")) ?? voices.find((v) => v.lang.startsWith("en")) ?? voices[0] ?? null;
   }, []);
-  const speak = useCallback(async (text) => {
+  const speak = useCallback2(async (text) => {
     if (!window.speechSynthesis) return;
     window.speechSynthesis.cancel();
     return new Promise((resolve) => {
@@ -858,11 +1506,11 @@ function useHeyShift(config = {}) {
       }
     });
   }, [getVoice, updateState]);
-  const cancelSpeech = useCallback(() => {
+  const cancelSpeech = useCallback2(() => {
     window.speechSynthesis?.cancel();
     if (stateRef.current === "speaking") updateState("idle");
   }, [updateState]);
-  const resetSilenceTimer = useCallback((text) => {
+  const resetSilenceTimer = useCallback2((text) => {
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
     silenceTimerRef.current = setTimeout(async () => {
       if (!activeRef.current || !text.trim()) return;
@@ -883,7 +1531,7 @@ function useHeyShift(config = {}) {
       }
     }, silenceMs);
   }, [silenceMs, onCommand, speak, updateState]);
-  const startListening = useCallback(() => {
+  const startListening = useCallback2(() => {
     const SR = getSpeechRecognitionCtor();
     if (!SR || recRef.current) return;
     const rec = new SR();
@@ -929,7 +1577,7 @@ function useHeyShift(config = {}) {
     rec.start();
     recRef.current = rec;
   }, [language, wakeWord, resetSilenceTimer, updateState]);
-  const stopListening = useCallback(() => {
+  const stopListening = useCallback2(() => {
     if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
     const rec = recRef.current;
     recRef.current = null;
@@ -939,7 +1587,7 @@ function useHeyShift(config = {}) {
     setTranscript("");
     updateState("idle");
   }, [updateState]);
-  useEffect6(() => {
+  useEffect7(() => {
     return () => {
       const rec = recRef.current;
       recRef.current = null;
@@ -952,7 +1600,7 @@ function useHeyShift(config = {}) {
 }
 
 // src/voice/ShiftBar.tsx
-import { Fragment as Fragment3, jsx as jsx11, jsxs as jsxs7 } from "react/jsx-runtime";
+import { Fragment as Fragment3, jsx as jsx12, jsxs as jsxs7 } from "react/jsx-runtime";
 var COLORS = {
   idle: "rgba(255,255,255,0.15)",
   wake: "#0ed882",
@@ -965,12 +1613,12 @@ function ShiftBar({ state, dots = 3, size = 7, className = "" }) {
   const color = COLORS[state];
   const isAnimated = state !== "idle" && state !== "error";
   return /* @__PURE__ */ jsxs7(Fragment3, { children: [
-    /* @__PURE__ */ jsx11("style", { children: `
+    /* @__PURE__ */ jsx12("style", { children: `
         @keyframes _sb_pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.35;transform:scale(1.45)} }
         @keyframes _sb_wave  { 0%,100%{transform:scaleY(1)} 50%{transform:scaleY(1.9)} }
         @keyframes _sb_spin  { to{transform:rotate(360deg)} }
       ` }),
-    /* @__PURE__ */ jsx11(
+    /* @__PURE__ */ jsx12(
       "span",
       {
         className,
@@ -988,7 +1636,7 @@ function ShiftBar({ state, dots = 3, size = 7, className = "" }) {
               animation = `_sb_pulse 1.2s ease-in-out ${i * 0.18}s infinite`;
             }
           }
-          return /* @__PURE__ */ jsx11(
+          return /* @__PURE__ */ jsx12(
             "span",
             {
               style: {
@@ -1014,16 +1662,24 @@ function ShiftBar({ state, dots = 3, size = 7, className = "" }) {
 export {
   ACCENT_RGB,
   CanvasLauncher,
+  CanvasProvider,
   CanvasTransition,
+  DEFAULT_H,
+  GAP,
   GenerativeView,
   HolographicShine,
   LiveCard,
   LiveStat,
+  MIN_H,
+  MIN_W,
   PageTransition,
   ScrollGenerateCard,
   ShiftBar,
   ShiftCard,
   TiltCard,
+  WIDTH_SPAN,
+  tallH,
+  useCanvas,
   useGenerate,
   useHeyShift
 };

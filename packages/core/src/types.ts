@@ -131,6 +131,13 @@ export interface BrainConfig {
   contextGraph?: import('./graph.js').ContextGraph;
   genome?: import('./genome.js').GenomeStore;
   product?: string; // e.g. 'lendshift', 'realshift'
+  /**
+   * Spend telemetry hook — invoked after every completed think() with the
+   * summed token usage for the whole turn (all rounds of the agentic tool
+   * loop). Products pipe this into their usage counters. Errors thrown here
+   * are swallowed: telemetry must never break a response.
+   */
+  onUsage?: (usage: { inputTokens: number; outputTokens: number; provider: string; model: string }) => void;
 }
 
 export interface ThinkOpts {

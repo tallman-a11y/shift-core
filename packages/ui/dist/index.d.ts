@@ -263,6 +263,113 @@ interface PageTransitionProps {
  */
 declare function PageTransition({ children, className }: PageTransitionProps): react.JSX.Element;
 
+declare const GAP = 20;
+declare const DEFAULT_H = 420;
+declare const MIN_W = 240;
+declare const MIN_H = 200;
+type BlockWidth = "sm" | "md" | "lg" | "xl";
+declare const WIDTH_SPAN: Record<BlockWidth, number>;
+type ResolveBlock = (key: string) => {
+    defaultWidth?: BlockWidth;
+} | null | undefined;
+interface CanvasBlock {
+    id: string;
+    key: string;
+    context?: unknown;
+    locked?: boolean;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    z: number;
+    placed?: boolean;
+    width?: BlockWidth;
+}
+interface SavedBlock {
+    key: string;
+    width?: BlockWidth;
+    x?: number;
+    y?: number;
+    w?: number;
+    h?: number;
+}
+type SnapLayout = "full" | "left" | "right" | "top" | "bottom" | "tl" | "tr" | "bl" | "br";
+type SnapBox = {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+};
+type SnapPreview = {
+    rect: SnapBox;
+    locked: SnapBox[];
+    others: SnapBox[];
+    blocked: boolean;
+};
+type SnapGhost = {
+    target: {
+        x: number;
+        y: number;
+        w: number;
+        h: number;
+    };
+    others: {
+        x: number;
+        y: number;
+        w: number;
+        h: number;
+    }[];
+} | null;
+interface CanvasApi {
+    blocks: CanvasBlock[];
+    addBlock: (key: string, context?: unknown, width?: BlockWidth, append?: boolean) => void;
+    removeBlock: (id: string) => void;
+    resizeBlock: (id: string, width: BlockWidth) => void;
+    snapTo: (id: string, layout: SnapLayout) => void;
+    snapPreview: (id: string, layout: SnapLayout) => SnapPreview;
+    previewSnap: (id: string, layout: SnapLayout) => void;
+    clearSnapPreview: () => void;
+    snapGhost: SnapGhost;
+    moveTo: (id: string, x: number, y: number) => void;
+    sizeTo: (id: string, w: number, h: number) => void;
+    setRect: (id: string, r: {
+        x: number;
+        y: number;
+        w: number;
+        h: number;
+    }) => void;
+    resizeRow: (id: string, x: number, w: number, h: number, origin: {
+        id: string;
+        x: number;
+        y: number;
+        w: number;
+        h: number;
+    }[]) => void;
+    bringToFront: (id: string) => void;
+    resolveCollisions: (id: string) => void;
+    toggleLock: (id: string) => void;
+    clear: (keepKey?: string) => void;
+    interacting: boolean;
+    setInteracting: (v: boolean) => void;
+    activeId: string | null;
+    setActiveId: (id: string | null) => void;
+    boardWidth: number;
+}
+declare function useCanvas(): CanvasApi;
+declare function tallH(boardH: number): number;
+declare function CanvasProvider({ children, resolveBlock, initialKeys, initialLayout, addKey, persist, savedSession, }: {
+    children: ReactNode;
+    resolveBlock: ResolveBlock;
+    initialKeys?: string[];
+    initialLayout?: SavedBlock[];
+    addKey?: string | null;
+    persist?: boolean;
+    savedSession?: {
+        blocks?: SavedBlock[];
+        savedDay?: string | null;
+    };
+}): react.JSX.Element;
+
 type ShiftBarState = 'idle' | 'wake' | 'listening' | 'thinking' | 'speaking' | 'error';
 interface HeyShiftConfig {
     wakeWord?: string;
@@ -292,4 +399,4 @@ interface ShiftBarProps {
 }
 declare function ShiftBar({ state, dots, size, className }: ShiftBarProps): react.JSX.Element;
 
-export { ACCENT_RGB, type Accent, CanvasLauncher, type CanvasLauncherProps, CanvasTransition, type CanvasTransitionProps, type GenPhase, GenerativeView, type GenerativeViewProps, type HeyShiftConfig, type HeyShiftReturn, HolographicShine, type HolographicShineProps, type LauncherGroup, type LauncherItem, LiveCard, type LiveCardProps, LiveStat, type LiveStatProps, PageTransition, type PageTransitionProps, ScrollGenerateCard, type ScrollGenerateCardProps, ShiftBar, type ShiftBarProps, type ShiftBarState, ShiftCard, type ShiftCardProps, TiltCard, type TiltCardProps, type UseGenerateOptions, useGenerate, useHeyShift };
+export { ACCENT_RGB, type Accent, type BlockWidth, type CanvasBlock, CanvasLauncher, type CanvasLauncherProps, CanvasProvider, CanvasTransition, type CanvasTransitionProps, DEFAULT_H, GAP, type GenPhase, GenerativeView, type GenerativeViewProps, type HeyShiftConfig, type HeyShiftReturn, HolographicShine, type HolographicShineProps, type LauncherGroup, type LauncherItem, LiveCard, type LiveCardProps, LiveStat, type LiveStatProps, MIN_H, MIN_W, PageTransition, type PageTransitionProps, type ResolveBlock, type SavedBlock, ScrollGenerateCard, type ScrollGenerateCardProps, ShiftBar, type ShiftBarProps, type ShiftBarState, ShiftCard, type ShiftCardProps, type SnapBox, type SnapGhost, type SnapLayout, type SnapPreview, TiltCard, type TiltCardProps, type UseGenerateOptions, WIDTH_SPAN, tallH, useCanvas, useGenerate, useHeyShift };

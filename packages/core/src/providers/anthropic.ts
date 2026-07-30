@@ -46,6 +46,8 @@ export class AnthropicProvider implements ModelProvider {
 
     let responseText = '';
     const toolsInvoked: string[] = [];
+    let inputTokens = 0;
+    let outputTokens = 0;
 
     // Agentic tool loop — runs entirely within the provider
     while (true) {
@@ -56,6 +58,9 @@ export class AnthropicProvider implements ModelProvider {
         messages: currentMessages,
         ...(anthropicTools.length > 0 ? { tools: anthropicTools } : {}),
       });
+
+      inputTokens += response.usage?.input_tokens ?? 0;
+      outputTokens += response.usage?.output_tokens ?? 0;
 
       const textBlocks = response.content.filter(
         (b): b is Anthropic.Messages.TextBlock => b.type === 'text',
@@ -93,7 +98,7 @@ export class AnthropicProvider implements ModelProvider {
       ];
     }
 
-    return { text: responseText, toolsInvoked };
+    return { text: responseText, toolsInvoked, usage: { inputTokens, outputTokens } };
   }
 
   async *stream(opts: {

@@ -261,6 +261,14 @@ interface ProviderResponse {
     text: string;
     /** Names of every tool called during this completion, in order. */
     toolsInvoked: string[];
+    /**
+     * Token usage summed across the whole completion (including every round of
+     * the agentic tool loop). Optional: providers that can't report usage omit it.
+     */
+    usage?: {
+        inputTokens: number;
+        outputTokens: number;
+    };
 }
 /**
  * ModelProvider — the inference abstraction that makes Shift Brain
@@ -406,6 +414,18 @@ interface BrainConfig {
     contextGraph?: ContextGraph;
     genome?: GenomeStore;
     product?: string;
+    /**
+     * Spend telemetry hook — invoked after every completed think() with the
+     * summed token usage for the whole turn (all rounds of the agentic tool
+     * loop). Products pipe this into their usage counters. Errors thrown here
+     * are swallowed: telemetry must never break a response.
+     */
+    onUsage?: (usage: {
+        inputTokens: number;
+        outputTokens: number;
+        provider: string;
+        model: string;
+    }) => void;
 }
 interface ThinkOpts {
     userId: string;
@@ -699,4 +719,38 @@ declare class RouterProvider implements ModelProvider {
     }): AsyncIterable<string>;
 }
 
-export { AnthropicProvider, type BrainConfig, type CollectivePattern, type ContextGraph, type ConversationTurn, type CrossProductEvent, type CrossProductIdentity, EMBED_DIM, type EmbedInputType, type EmbeddingProvider, type FeedbackEntry, type FeedbackSignal, type FineTuningFormat, type FineTuningPair, type GenomeStore, type KnowledgeChunk, type KnowledgeStore, type LearningStore, type MemoryEntry, type MemorySource, type MemoryStore, type MemoryType, type ModelProvider, type ModelVersion, NoOpContextGraph, NoOpGenomeStore, OllamaProvider, type OpenAICompatConfig, OpenAICompatProvider, type OutcomeRecord, type ProviderMessage, type ProviderResponse, type ProviderTool, type RecordMemoryOpts, type RecordResult, type RetrieveOpts, type RouteDecision, type RouterConfig, RouterProvider, ShiftBrain, type ShiftPersona, type ShiftTool, type ThinkOpts, type ThinkResult, type ToolContext, type ToolExecutor, type ToolInputSchema, ToolRegistry, type TrainingJob, type UserPreferences, VoyageEmbeddingProvider, buildSystemPrompt, centroid, cosineSimilarity, definePersona, exportForFineTuning, formatCollectiveIntelligenceForPrompt, formatCrossProductContextForPrompt, formatMemoriesForPrompt, formatPreferencesForPrompt, greedyCluster, recordMemory, retrieveRelevantMemories };
+declare const WILL_VOICE_ID = "bIHbv24MWmeRgasZH58o";
+interface SpeakConfig {
+    /** ELEVENLABS_API_KEY */
+    elevenLabsKey?: string;
+    /** ELEVENLABS_VOICE_ID — defaults to Will */
+    voiceId?: string;
+    /** SHIFT_TTS_CACHE_URL — the central shift-brain project URL (https://<ref>.supabase.co) */
+    cacheBaseUrl?: string;
+    /** SHIFT_TTS_CACHE_KEY — central service-role key (writes only; reads are public) */
+    cacheServiceKey?: string;
+    modelId?: string;
+    voiceSettings?: Record<string, unknown>;
+}
+interface SpeakResult {
+    /** MP3 audio bytes, or null on error / no-text. */
+    audio: ArrayBuffer | null;
+    /** hit = served from the shared cache; miss = freshly synthesized (and cached); skip = no audio produced. */
+    cache: "hit" | "miss" | "skip";
+    /** 200 ok · 400 no text · 502 ElevenLabs error · 503 not configured. */
+    status: number;
+    error?: {
+        upstreamStatus: number;
+        detail: string;
+    };
+}
+/**
+ * Synthesize a line as Will, using the shared family TTS cache. Returns the audio
+ * bytes plus whether it was a cache hit/miss. The caller (a product's voice route)
+ * keeps its own auth / rate-limit and just wraps the returned bytes in a Response.
+ */
+declare function synthesizeSpeech(text: string, cfg: SpeakConfig): Promise<SpeakResult>;
+/** Convenience: build a SpeakConfig from standard env vars. */
+declare function speakConfigFromEnv(env?: Record<string, string | undefined>): SpeakConfig;
+
+export { AnthropicProvider, type BrainConfig, type CollectivePattern, type ContextGraph, type ConversationTurn, type CrossProductEvent, type CrossProductIdentity, EMBED_DIM, type EmbedInputType, type EmbeddingProvider, type FeedbackEntry, type FeedbackSignal, type FineTuningFormat, type FineTuningPair, type GenomeStore, type KnowledgeChunk, type KnowledgeStore, type LearningStore, type MemoryEntry, type MemorySource, type MemoryStore, type MemoryType, type ModelProvider, type ModelVersion, NoOpContextGraph, NoOpGenomeStore, OllamaProvider, type OpenAICompatConfig, OpenAICompatProvider, type OutcomeRecord, type ProviderMessage, type ProviderResponse, type ProviderTool, type RecordMemoryOpts, type RecordResult, type RetrieveOpts, type RouteDecision, type RouterConfig, RouterProvider, ShiftBrain, type ShiftPersona, type ShiftTool, type SpeakConfig, type SpeakResult, type ThinkOpts, type ThinkResult, type ToolContext, type ToolExecutor, type ToolInputSchema, ToolRegistry, type TrainingJob, type UserPreferences, VoyageEmbeddingProvider, WILL_VOICE_ID, buildSystemPrompt, centroid, cosineSimilarity, definePersona, exportForFineTuning, formatCollectiveIntelligenceForPrompt, formatCrossProductContextForPrompt, formatMemoriesForPrompt, formatPreferencesForPrompt, greedyCluster, recordMemory, retrieveRelevantMemories, speakConfigFromEnv, synthesizeSpeech };

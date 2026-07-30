@@ -292,6 +292,8 @@ var AnthropicProvider = class {
     }));
     let responseText = "";
     const toolsInvoked = [];
+    let inputTokens = 0;
+    let outputTokens = 0;
     while (true) {
       const response = await this.client.messages.create({
         model: this.modelId,
@@ -300,6 +302,8 @@ var AnthropicProvider = class {
         messages: currentMessages,
         ...anthropicTools.length > 0 ? { tools: anthropicTools } : {}
       });
+      inputTokens += response.usage?.input_tokens ?? 0;
+      outputTokens += response.usage?.output_tokens ?? 0;
       const textBlocks = response.content.filter(
         (b) => b.type === "text"
       );
@@ -331,7 +335,7 @@ var AnthropicProvider = class {
         { role: "user", content: toolResults }
       ];
     }
-    return { text: responseText, toolsInvoked };
+    return { text: responseText, toolsInvoked, usage: { inputTokens, outputTokens } };
   }
   async *stream(opts) {
     const { system, messages, maxTokens = 1024 } = opts;
@@ -412,6 +416,17 @@ var ShiftBrain = class {
     });
     const responseText = providerResponse.text;
     toolsInvoked.push(...providerResponse.toolsInvoked.filter((n) => !toolsInvoked.includes(n)));
+    if (this.config.onUsage && providerResponse.usage) {
+      try {
+        this.config.onUsage({
+          inputTokens: providerResponse.usage.inputTokens,
+          outputTokens: providerResponse.usage.outputTokens,
+          provider: this.provider.name,
+          model: this.provider.modelId
+        });
+      } catch {
+      }
+    }
     if (contextGraph && pendingEvents.length > 0) {
       await contextGraph.markConsumed(pendingEvents.map((e) => e.id));
     }
@@ -798,6 +813,76 @@ ${assistantContent}`;
   );
 }
 
+// src/voice.ts
+var WILL_VOICE_ID = "bIHbv24MWmeRgasZH58o";
+var DEFAULT_MODEL_ID = "eleven_turbo_v2_5";
+var DEFAULT_VOICE_SETTINGS = {
+  stability: 0.5,
+  similarity_boost: 0.75,
+  style: 0.1,
+  use_speaker_boost: true
+};
+var CACHE_BUCKET = "tts-cache";
+async function sha256Hex(input) {
+  const data = new TextEncoder().encode(input);
+  const buf = await globalThis.crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+async function synthesizeSpeech(text, cfg) {
+  const clean = text?.trim();
+  if (!clean) return { audio: null, cache: "skip", status: 400 };
+  const voiceId = cfg.voiceId || WILL_VOICE_ID;
+  const modelId = cfg.modelId || DEFAULT_MODEL_ID;
+  const settings = cfg.voiceSettings || DEFAULT_VOICE_SETTINGS;
+  const hash = await sha256Hex(`${voiceId}|${modelId}|${JSON.stringify(settings)}|${clean}`);
+  const path = `${hash}.mp3`;
+  const base = cfg.cacheBaseUrl?.replace(/\/$/, "");
+  if (base) {
+    try {
+      const r = await fetch(`${base}/storage/v1/object/public/${CACHE_BUCKET}/${path}`);
+      if (r.ok) {
+        const audio2 = await r.arrayBuffer();
+        if (audio2.byteLength > 0) return { audio: audio2, cache: "hit", status: 200 };
+      }
+    } catch {
+    }
+  }
+  if (!cfg.elevenLabsKey) return { audio: null, cache: "skip", status: 503 };
+  const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
+    method: "POST",
+    headers: { "xi-api-key": cfg.elevenLabsKey, "Content-Type": "application/json" },
+    body: JSON.stringify({ text: clean, model_id: modelId, voice_settings: settings })
+  });
+  if (!res.ok) {
+    const detail = (await res.text().catch(() => "unknown")).slice(0, 300);
+    return { audio: null, cache: "skip", status: 502, error: { upstreamStatus: res.status, detail } };
+  }
+  const audio = await res.arrayBuffer();
+  if (base && cfg.cacheServiceKey) {
+    try {
+      await fetch(`${base}/storage/v1/object/${CACHE_BUCKET}/${path}`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${cfg.cacheServiceKey}`,
+          "Content-Type": "audio/mpeg",
+          "x-upsert": "true"
+        },
+        body: audio
+      });
+    } catch {
+    }
+  }
+  return { audio, cache: "miss", status: 200 };
+}
+function speakConfigFromEnv(env = process.env) {
+  return {
+    elevenLabsKey: env.ELEVENLABS_API_KEY,
+    voiceId: env.ELEVENLABS_VOICE_ID,
+    cacheBaseUrl: env.SHIFT_TTS_CACHE_URL,
+    cacheServiceKey: env.SHIFT_TTS_CACHE_KEY
+  };
+}
+
 exports.AnthropicProvider = AnthropicProvider;
 exports.EMBED_DIM = EMBED_DIM;
 exports.NoOpContextGraph = NoOpContextGraph;
@@ -808,6 +893,7 @@ exports.RouterProvider = RouterProvider;
 exports.ShiftBrain = ShiftBrain;
 exports.ToolRegistry = ToolRegistry;
 exports.VoyageEmbeddingProvider = VoyageEmbeddingProvider;
+exports.WILL_VOICE_ID = WILL_VOICE_ID;
 exports.buildSystemPrompt = buildSystemPrompt;
 exports.centroid = centroid;
 exports.cosineSimilarity = cosineSimilarity;
@@ -820,5 +906,7 @@ exports.formatPreferencesForPrompt = formatPreferencesForPrompt;
 exports.greedyCluster = greedyCluster;
 exports.recordMemory = recordMemory;
 exports.retrieveRelevantMemories = retrieveRelevantMemories;
+exports.speakConfigFromEnv = speakConfigFromEnv;
+exports.synthesizeSpeech = synthesizeSpeech;
 //# sourceMappingURL=index.cjs.map
 //# sourceMappingURL=index.cjs.map
