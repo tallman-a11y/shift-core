@@ -319,6 +319,28 @@ function tileItems<T extends CanvasBlock>(items: T[], boardW: number, boardH: nu
   });
 }
 
+/**
+ * Fit a layout to the CURRENT board. A layout saved on a much wider screen
+ * (ultrawide desktop → iPad) would clamp into an overlapping pile, so past a
+ * 1.5× overflow it re-tiles cleanly instead; modest overflow (a desktop window
+ * shrink) keeps the arrangement and just clamps each window on-board.
+ * Returns the SAME array reference when nothing needed to change.
+ */
+function fitToBoard<T extends CanvasBlock>(list: T[], boardW: number, boardH: number): T[] {
+  if (list.length === 0) return list;
+  const extent = Math.max(...list.map((b) => b.x + b.w));
+  if (extent > boardW * 1.5) return tileItems(list, boardW, boardH);
+  let changed = false;
+  const next = list.map((b) => {
+    const w = Math.min(b.w, boardW);
+    const x = Math.max(0, Math.min(b.x, boardW - w));
+    if (w === b.w && x === b.x) return b;
+    changed = true;
+    return { ...b, w, x };
+  });
+  return changed ? next : list;
+}
+
 function overlaps(a: { x: number; y: number; w: number; h: number }, b: { x: number; y: number; w: number; h: number }): boolean {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
@@ -395,6 +417,12 @@ export function CanvasProvider({
   const boardHRef = useRef(820);
   const persistRef = useRef(persist);
   useEffect(() => { persistRef.current = persist; }, [persist]);
+  // Device-fit bookkeeping: fitAdjustRef marks blocks changes that came from
+  // fitting the layout to a narrower board (a VIEW concern — never saved);
+  // hadUserChangeRef flips on the first real user-driven change, after which
+  // the as-fitted layout is what the user is actually arranging, so it saves.
+  const fitAdjustRef = useRef(false);
+  const hadUserChangeRef = useRef(false);
 
   useEffect(() => {
     const measure = () => {
@@ -402,21 +430,13 @@ export function CanvasProvider({
       boardRef.current = w;
       boardHRef.current = Math.max(480, window.innerHeight);
       setBoardWidth(w);
-      // Fit windows to the CURRENT board. A layout saved on a wide desktop
-      // restores `placed` coordinates verbatim — on an iPad-width board those
-      // windows hang past the right edge, unreachable. Clamp width to the
-      // board, then pull x back so every window ends on-board. No-ops when
-      // nothing is out of bounds (returning `prev` skips the re-render).
+      // Device fit: windows saved on a wider screen must land on THIS board
+      // (clamp; re-tile past 1.5× overflow). Marked via fitAdjustRef so the
+      // persist layer treats it as a view concern, never a layout change.
       setBlocks((prev) => {
-        let changed = false;
-        const next = prev.map((b) => {
-          const bw = Math.min(b.w, w);
-          const bx = Math.max(0, Math.min(b.x, w - bw));
-          if (bw === b.w && bx === b.x) return b;
-          changed = true;
-          return { ...b, w: bw, x: bx };
-        });
-        return changed ? next : prev;
+        const next = fitToBoard(prev, w, boardHRef.current);
+        if (next !== prev) fitAdjustRef.current = true;
+        return next;
       });
     };
     measure();
@@ -747,7 +767,12 @@ export function CanvasProvider({
     const built = saved
       .filter((b) => b && typeof b.key === "string" && resolve(b.key))
       .map((b) => blockFromSaved(b, zRef.current++));
-    setBlocks(built.some((b) => b.placed) ? built : layoutDefault(built));
+    const arranged = built.some((b) => b.placed) ? built : layoutDefault(built);
+    // Restoring a session saved on a wider screen must fit THIS board too
+    // (restore happens after mount, so the measure-time fit never sees it).
+    const fitted = fitToBoard(arranged, boardRef.current, boardHRef.current);
+    if (fitted !== arranged) fitAdjustRef.current = true;
+    setBlocks(fitted);
   }, [savedSession, layoutDefault]);
 
   const clear = useCallback((keepKey?: string) => {
@@ -875,6 +900,16 @@ export function CanvasProvider({
   useEffect(() => {
     if (!persist) return;
     if (firstRun.current) { firstRun.current = false; return; }
+    // Device-fit changes are a view concern: an iPad visit must never rewrite
+    // the arrangement saved on the desktop. Once the user makes a real change
+    // on this device, saves resume (including the fitted geometry they're
+    // actually looking at).
+    if (fitAdjustRef.current) {
+      fitAdjustRef.current = false;
+      if (!hadUserChangeRef.current) return;
+    } else {
+      hadUserChangeRef.current = true;
+    }
     if (!payloadRef.current) return; // never save an empty canvas
     if (saveTimer.current) clearTimeout(saveTimer.current);
     const body = JSON.stringify(payloadRef.current);
@@ -893,6 +928,9 @@ export function CanvasProvider({
   useEffect(() => {
     if (!persist) return;
     const flush = () => {
+      // Same rule as the debounced save: a purely device-fitted layout (no
+      // real user change this session) must not overwrite the saved one.
+      if (!hadUserChangeRef.current) return;
       if (!payloadRef.current) return;
       try {
         void fetch("/api/canvas-layout", {

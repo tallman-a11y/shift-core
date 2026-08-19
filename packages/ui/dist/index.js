@@ -964,6 +964,20 @@ function tileItems(items, boardW, boardH) {
     return { ...it, x, y, w, h: rowH };
   });
 }
+function fitToBoard(list, boardW, boardH) {
+  if (list.length === 0) return list;
+  const extent = Math.max(...list.map((b) => b.x + b.w));
+  if (extent > boardW * 1.5) return tileItems(list, boardW, boardH);
+  let changed = false;
+  const next = list.map((b) => {
+    const w = Math.min(b.w, boardW);
+    const x = Math.max(0, Math.min(b.x, boardW - w));
+    if (w === b.w && x === b.x) return b;
+    changed = true;
+    return { ...b, w, x };
+  });
+  return changed ? next : list;
+}
 function overlaps(a, b) {
   return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 }
@@ -1011,6 +1025,8 @@ function CanvasProvider({
   useEffect6(() => {
     persistRef.current = persist;
   }, [persist]);
+  const fitAdjustRef = useRef6(false);
+  const hadUserChangeRef = useRef6(false);
   useEffect6(() => {
     const measure = () => {
       const w = Math.max(360, window.innerWidth - 40);
@@ -1018,15 +1034,9 @@ function CanvasProvider({
       boardHRef.current = Math.max(480, window.innerHeight);
       setBoardWidth(w);
       setBlocks((prev) => {
-        let changed = false;
-        const next = prev.map((b) => {
-          const bw = Math.min(b.w, w);
-          const bx = Math.max(0, Math.min(b.x, w - bw));
-          if (bw === b.w && bx === b.x) return b;
-          changed = true;
-          return { ...b, w: bw, x: bx };
-        });
-        return changed ? next : prev;
+        const next = fitToBoard(prev, w, boardHRef.current);
+        if (next !== prev) fitAdjustRef.current = true;
+        return next;
       });
     };
     measure();
@@ -1268,7 +1278,10 @@ function CanvasProvider({
     restoredRef.current = true;
     setCanRestore(false);
     const built = saved.filter((b) => b && typeof b.key === "string" && resolve(b.key)).map((b) => blockFromSaved(b, zRef.current++));
-    setBlocks(built.some((b) => b.placed) ? built : layoutDefault(built));
+    const arranged = built.some((b) => b.placed) ? built : layoutDefault(built);
+    const fitted = fitToBoard(arranged, boardRef.current, boardHRef.current);
+    if (fitted !== arranged) fitAdjustRef.current = true;
+    setBlocks(fitted);
   }, [savedSession, layoutDefault]);
   const clear = useCallback((keepKey) => {
     setBlocks((prev) => keepKey ? prev.filter((b) => b.key === keepKey) : []);
@@ -1385,6 +1398,12 @@ function CanvasProvider({
       firstRun.current = false;
       return;
     }
+    if (fitAdjustRef.current) {
+      fitAdjustRef.current = false;
+      if (!hadUserChangeRef.current) return;
+    } else {
+      hadUserChangeRef.current = true;
+    }
     if (!payloadRef.current) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     const body = JSON.stringify(payloadRef.current);
@@ -1403,6 +1422,7 @@ function CanvasProvider({
   useEffect6(() => {
     if (!persist) return;
     const flush = () => {
+      if (!hadUserChangeRef.current) return;
       if (!payloadRef.current) return;
       try {
         void fetch("/api/canvas-layout", {
