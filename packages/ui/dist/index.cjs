@@ -1057,6 +1057,17 @@ function CanvasProvider({
       boardRef.current = w;
       boardHRef.current = Math.max(480, window.innerHeight);
       setBoardWidth(w);
+      setBlocks((prev) => {
+        let changed = false;
+        const next = prev.map((b) => {
+          const bw = Math.min(b.w, w);
+          const bx = Math.max(0, Math.min(b.x, w - bw));
+          if (bw === b.w && bx === b.x) return b;
+          changed = true;
+          return { ...b, w: bw, x: bx };
+        });
+        return changed ? next : prev;
+      });
     };
     measure();
     window.addEventListener("resize", measure);

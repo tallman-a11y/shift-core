@@ -402,6 +402,22 @@ export function CanvasProvider({
       boardRef.current = w;
       boardHRef.current = Math.max(480, window.innerHeight);
       setBoardWidth(w);
+      // Fit windows to the CURRENT board. A layout saved on a wide desktop
+      // restores `placed` coordinates verbatim — on an iPad-width board those
+      // windows hang past the right edge, unreachable. Clamp width to the
+      // board, then pull x back so every window ends on-board. No-ops when
+      // nothing is out of bounds (returning `prev` skips the re-render).
+      setBlocks((prev) => {
+        let changed = false;
+        const next = prev.map((b) => {
+          const bw = Math.min(b.w, w);
+          const bx = Math.max(0, Math.min(b.x, w - bw));
+          if (bw === b.w && bx === b.x) return b;
+          changed = true;
+          return { ...b, w: bw, x: bx };
+        });
+        return changed ? next : prev;
+      });
     };
     measure();
     window.addEventListener("resize", measure);
