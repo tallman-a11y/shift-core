@@ -1,6 +1,6 @@
 {
   "name": "@allshift/core",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Shift family shared intelligence layer — persona, memory spine, tool registry, embeddings, ShiftBrain orchestrator.",
   "license": "UNLICENSED",
   "private": false,
@@ -23,7 +23,9 @@
   "scripts": {
     "build": "tsup",
     "dev": "tsup --watch",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "peerDependencies": {
     "@anthropic-ai/sdk": ">=0.20"
@@ -32,7 +34,8 @@
     "@anthropic-ai/sdk": "^0.102.0",
     "@types/node": "^20",
     "tsup": "^8.5.1",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.11"
   },
   "publishConfig": {
     "access": "public"

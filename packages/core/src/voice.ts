@@ -13,6 +13,7 @@
 // degrades to a plain ElevenLabs call, so it's always safe to call.
 
 export const WILL_VOICE_ID = "bIHbv24MWmeRgasZH58o";
+
 const DEFAULT_MODEL_ID = "eleven_turbo_v2_5";
 const DEFAULT_VOICE_SETTINGS = {
   stability: 0.5,
@@ -21,6 +22,41 @@ const DEFAULT_VOICE_SETTINGS = {
   use_speaker_boost: true,
 } as const;
 const CACHE_BUCKET = "tts-cache";
+
+/**
+ * What `vercel env pull` writes instead of the value of a Sensitive-typed
+ * environment variable.
+ *
+ * This string is the single most expensive piece of trivia in the family's
+ * infrastructure. Code that trusts a pulled .env sends it upstream as if it
+ * were a credential, and the rejection is indistinguishable from a dead key:
+ *
+ *   ElevenLabs   401 {"status":"invalid_api_key"}
+ *   ElevenLabs   400 invalid_uid   (when it lands in the voice id)
+ *   Supabase     403 "Invalid Compact JWS"   — i.e. "that is not a JWT"
+ *
+ * On 2026-08-30 it produced three separate "the key has rotated" conclusions
+ * about credentials that were entirely healthy, and nearly triggered a
+ * needless rotation of a production service-role key. Products mark most of
+ * their variables Sensitive, so on a pulled environment this is the common
+ * case, not an edge case.
+ */
+export const SENSITIVE_PLACEHOLDER = "[SENSITIVE]";
+
+/**
+ * A credential that is genuinely present, or undefined.
+ *
+ * Use this for ANY secret read from the environment, not just voice. The point
+ * is to convert "this environment cannot see the value" into absence — which
+ * callers already handle by degrading — rather than into a confusing upstream
+ * authentication failure that reads as a broken credential.
+ */
+export function realSecret(value: string | undefined): string | undefined {
+  if (value === undefined || value === null) return undefined;
+  const trimmed = String(value).trim();
+  if (!trimmed || trimmed === SENSITIVE_PLACEHOLDER) return undefined;
+  return trimmed;
+}
 
 export interface SpeakConfig {
   /** ELEVENLABS_API_KEY */
@@ -61,12 +97,17 @@ export async function synthesizeSpeech(text: string, cfg: SpeakConfig): Promise<
   const clean = text?.trim();
   if (!clean) return { audio: null, cache: "skip", status: 400 };
 
-  const voiceId = cfg.voiceId || WILL_VOICE_ID;
+  // Every credential goes through realSecret, so a config built by hand from a
+  // pulled .env degrades instead of sending `[SENSITIVE]` upstream. Doing it
+  // here as well as in speakConfigFromEnv is deliberate: callers construct
+  // SpeakConfig themselves, and this is the only place that can't be bypassed.
+  const key = realSecret(cfg.elevenLabsKey);
+  const voiceId = realSecret(cfg.voiceId) || WILL_VOICE_ID;
   const modelId = cfg.modelId || DEFAULT_MODEL_ID;
   const settings = cfg.voiceSettings || DEFAULT_VOICE_SETTINGS;
   const hash = await sha256Hex(`${voiceId}|${modelId}|${JSON.stringify(settings)}|${clean}`);
   const path = `${hash}.mp3`;
-  const base = cfg.cacheBaseUrl?.replace(/\/$/, "");
+  const base = realSecret(cfg.cacheBaseUrl)?.replace(/\/$/, "");
 
   // 1) Shared cache hit (anonymous public read → CDN).
   if (base) {
@@ -80,10 +121,10 @@ export async function synthesizeSpeech(text: string, cfg: SpeakConfig): Promise<
   }
 
   // 2) Fresh synth.
-  if (!cfg.elevenLabsKey) return { audio: null, cache: "skip", status: 503 };
+  if (!key) return { audio: null, cache: "skip", status: 503 };
   const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
     method: "POST",
-    headers: { "xi-api-key": cfg.elevenLabsKey, "Content-Type": "application/json" },
+    headers: { "xi-api-key": key, "Content-Type": "application/json" },
     body: JSON.stringify({ text: clean, model_id: modelId, voice_settings: settings }),
   });
   if (!res.ok) {
@@ -93,12 +134,13 @@ export async function synthesizeSpeech(text: string, cfg: SpeakConfig): Promise<
   const audio = await res.arrayBuffer();
 
   // 3) Populate the shared cache (awaited so it survives serverless freeze; failure never blocks playback).
-  if (base && cfg.cacheServiceKey) {
+  const cacheKey = realSecret(cfg.cacheServiceKey);
+  if (base && cacheKey) {
     try {
       await fetch(`${base}/storage/v1/object/${CACHE_BUCKET}/${path}`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${cfg.cacheServiceKey}`,
+          Authorization: `Bearer ${cacheKey}`,
           "Content-Type": "audio/mpeg",
           "x-upsert": "true",
         },
@@ -110,12 +152,19 @@ export async function synthesizeSpeech(text: string, cfg: SpeakConfig): Promise<
   return { audio, cache: "miss", status: 200 };
 }
 
-/** Convenience: build a SpeakConfig from standard env vars. */
+/**
+ * Convenience: build a SpeakConfig from standard env vars.
+ *
+ * Values that are absent, blank, or Vercel's `[SENSITIVE]` placeholder come
+ * back undefined, so an environment that cannot READ a secret is treated the
+ * same as one that does not HAVE it — the voice degrades to the browser's own
+ * speech rather than failing with an upstream authentication error.
+ */
 export function speakConfigFromEnv(env: Record<string, string | undefined> = process.env): SpeakConfig {
   return {
-    elevenLabsKey: env.ELEVENLABS_API_KEY,
-    voiceId: env.ELEVENLABS_VOICE_ID,
-    cacheBaseUrl: env.SHIFT_TTS_CACHE_URL,
-    cacheServiceKey: env.SHIFT_TTS_CACHE_KEY,
+    elevenLabsKey: realSecret(env.ELEVENLABS_API_KEY),
+    voiceId: realSecret(env.ELEVENLABS_VOICE_ID),
+    cacheBaseUrl: realSecret(env.SHIFT_TTS_CACHE_URL),
+    cacheServiceKey: realSecret(env.SHIFT_TTS_CACHE_KEY),
   };
 }

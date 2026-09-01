@@ -823,6 +823,13 @@ var DEFAULT_VOICE_SETTINGS = {
   use_speaker_boost: true
 };
 var CACHE_BUCKET = "tts-cache";
+var SENSITIVE_PLACEHOLDER = "[SENSITIVE]";
+function realSecret(value) {
+  if (value === void 0 || value === null) return void 0;
+  const trimmed = String(value).trim();
+  if (!trimmed || trimmed === SENSITIVE_PLACEHOLDER) return void 0;
+  return trimmed;
+}
 async function sha256Hex(input) {
   const data = new TextEncoder().encode(input);
   const buf = await globalThis.crypto.subtle.digest("SHA-256", data);
@@ -831,12 +838,13 @@ async function sha256Hex(input) {
 async function synthesizeSpeech(text, cfg) {
   const clean = text?.trim();
   if (!clean) return { audio: null, cache: "skip", status: 400 };
-  const voiceId = cfg.voiceId || WILL_VOICE_ID;
+  const key = realSecret(cfg.elevenLabsKey);
+  const voiceId = realSecret(cfg.voiceId) || WILL_VOICE_ID;
   const modelId = cfg.modelId || DEFAULT_MODEL_ID;
   const settings = cfg.voiceSettings || DEFAULT_VOICE_SETTINGS;
   const hash = await sha256Hex(`${voiceId}|${modelId}|${JSON.stringify(settings)}|${clean}`);
   const path = `${hash}.mp3`;
-  const base = cfg.cacheBaseUrl?.replace(/\/$/, "");
+  const base = realSecret(cfg.cacheBaseUrl)?.replace(/\/$/, "");
   if (base) {
     try {
       const r = await fetch(`${base}/storage/v1/object/public/${CACHE_BUCKET}/${path}`);
@@ -847,10 +855,10 @@ async function synthesizeSpeech(text, cfg) {
     } catch {
     }
   }
-  if (!cfg.elevenLabsKey) return { audio: null, cache: "skip", status: 503 };
+  if (!key) return { audio: null, cache: "skip", status: 503 };
   const res = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${voiceId}`, {
     method: "POST",
-    headers: { "xi-api-key": cfg.elevenLabsKey, "Content-Type": "application/json" },
+    headers: { "xi-api-key": key, "Content-Type": "application/json" },
     body: JSON.stringify({ text: clean, model_id: modelId, voice_settings: settings })
   });
   if (!res.ok) {
@@ -858,12 +866,13 @@ async function synthesizeSpeech(text, cfg) {
     return { audio: null, cache: "skip", status: 502, error: { upstreamStatus: res.status, detail } };
   }
   const audio = await res.arrayBuffer();
-  if (base && cfg.cacheServiceKey) {
+  const cacheKey = realSecret(cfg.cacheServiceKey);
+  if (base && cacheKey) {
     try {
       await fetch(`${base}/storage/v1/object/${CACHE_BUCKET}/${path}`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${cfg.cacheServiceKey}`,
+          Authorization: `Bearer ${cacheKey}`,
           "Content-Type": "audio/mpeg",
           "x-upsert": "true"
         },
@@ -876,10 +885,10 @@ async function synthesizeSpeech(text, cfg) {
 }
 function speakConfigFromEnv(env = process.env) {
   return {
-    elevenLabsKey: env.ELEVENLABS_API_KEY,
-    voiceId: env.ELEVENLABS_VOICE_ID,
-    cacheBaseUrl: env.SHIFT_TTS_CACHE_URL,
-    cacheServiceKey: env.SHIFT_TTS_CACHE_KEY
+    elevenLabsKey: realSecret(env.ELEVENLABS_API_KEY),
+    voiceId: realSecret(env.ELEVENLABS_VOICE_ID),
+    cacheBaseUrl: realSecret(env.SHIFT_TTS_CACHE_URL),
+    cacheServiceKey: realSecret(env.SHIFT_TTS_CACHE_KEY)
   };
 }
 
@@ -890,6 +899,7 @@ exports.NoOpGenomeStore = NoOpGenomeStore;
 exports.OllamaProvider = OllamaProvider;
 exports.OpenAICompatProvider = OpenAICompatProvider;
 exports.RouterProvider = RouterProvider;
+exports.SENSITIVE_PLACEHOLDER = SENSITIVE_PLACEHOLDER;
 exports.ShiftBrain = ShiftBrain;
 exports.ToolRegistry = ToolRegistry;
 exports.VoyageEmbeddingProvider = VoyageEmbeddingProvider;
@@ -904,6 +914,7 @@ exports.formatCrossProductContextForPrompt = formatCrossProductContextForPrompt;
 exports.formatMemoriesForPrompt = formatMemoriesForPrompt;
 exports.formatPreferencesForPrompt = formatPreferencesForPrompt;
 exports.greedyCluster = greedyCluster;
+exports.realSecret = realSecret;
 exports.recordMemory = recordMemory;
 exports.retrieveRelevantMemories = retrieveRelevantMemories;
 exports.speakConfigFromEnv = speakConfigFromEnv;

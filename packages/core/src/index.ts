@@ -68,4 +68,12 @@ export { exportForFineTuning } from './training.js';
 
 // Voice — Will TTS with the shared family cache (synthesize once, replay free everywhere)
 export type { SpeakConfig, SpeakResult } from './voice.js';
-export { synthesizeSpeech, speakConfigFromEnv, WILL_VOICE_ID } from './voice.js';
+export {
+  synthesizeSpeech,
+  speakConfigFromEnv,
+  WILL_VOICE_ID,
+  // Exported for any credential, not just voice — see the note on
+  // SENSITIVE_PLACEHOLDER in voice.ts.
+  realSecret,
+  SENSITIVE_PLACEHOLDER,
+} from './voice.js';

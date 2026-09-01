@@ -720,6 +720,34 @@ declare class RouterProvider implements ModelProvider {
 }
 
 declare const WILL_VOICE_ID = "bIHbv24MWmeRgasZH58o";
+/**
+ * What `vercel env pull` writes instead of the value of a Sensitive-typed
+ * environment variable.
+ *
+ * This string is the single most expensive piece of trivia in the family's
+ * infrastructure. Code that trusts a pulled .env sends it upstream as if it
+ * were a credential, and the rejection is indistinguishable from a dead key:
+ *
+ *   ElevenLabs   401 {"status":"invalid_api_key"}
+ *   ElevenLabs   400 invalid_uid   (when it lands in the voice id)
+ *   Supabase     403 "Invalid Compact JWS"   — i.e. "that is not a JWT"
+ *
+ * On 2026-08-30 it produced three separate "the key has rotated" conclusions
+ * about credentials that were entirely healthy, and nearly triggered a
+ * needless rotation of a production service-role key. Products mark most of
+ * their variables Sensitive, so on a pulled environment this is the common
+ * case, not an edge case.
+ */
+declare const SENSITIVE_PLACEHOLDER = "[SENSITIVE]";
+/**
+ * A credential that is genuinely present, or undefined.
+ *
+ * Use this for ANY secret read from the environment, not just voice. The point
+ * is to convert "this environment cannot see the value" into absence — which
+ * callers already handle by degrading — rather than into a confusing upstream
+ * authentication failure that reads as a broken credential.
+ */
+declare function realSecret(value: string | undefined): string | undefined;
 interface SpeakConfig {
     /** ELEVENLABS_API_KEY */
     elevenLabsKey?: string;
@@ -750,7 +778,14 @@ interface SpeakResult {
  * keeps its own auth / rate-limit and just wraps the returned bytes in a Response.
  */
 declare function synthesizeSpeech(text: string, cfg: SpeakConfig): Promise<SpeakResult>;
-/** Convenience: build a SpeakConfig from standard env vars. */
+/**
+ * Convenience: build a SpeakConfig from standard env vars.
+ *
+ * Values that are absent, blank, or Vercel's `[SENSITIVE]` placeholder come
+ * back undefined, so an environment that cannot READ a secret is treated the
+ * same as one that does not HAVE it — the voice degrades to the browser's own
+ * speech rather than failing with an upstream authentication error.
+ */
 declare function speakConfigFromEnv(env?: Record<string, string | undefined>): SpeakConfig;
 
-export { AnthropicProvider, type BrainConfig, type CollectivePattern, type ContextGraph, type ConversationTurn, type CrossProductEvent, type CrossProductIdentity, EMBED_DIM, type EmbedInputType, type EmbeddingProvider, type FeedbackEntry, type FeedbackSignal, type FineTuningFormat, type FineTuningPair, type GenomeStore, type KnowledgeChunk, type KnowledgeStore, type LearningStore, type MemoryEntry, type MemorySource, type MemoryStore, type MemoryType, type ModelProvider, type ModelVersion, NoOpContextGraph, NoOpGenomeStore, OllamaProvider, type OpenAICompatConfig, OpenAICompatProvider, type OutcomeRecord, type ProviderMessage, type ProviderResponse, type ProviderTool, type RecordMemoryOpts, type RecordResult, type RetrieveOpts, type RouteDecision, type RouterConfig, RouterProvider, ShiftBrain, type ShiftPersona, type ShiftTool, type SpeakConfig, type SpeakResult, type ThinkOpts, type ThinkResult, type ToolContext, type ToolExecutor, type ToolInputSchema, ToolRegistry, type TrainingJob, type UserPreferences, VoyageEmbeddingProvider, WILL_VOICE_ID, buildSystemPrompt, centroid, cosineSimilarity, definePersona, exportForFineTuning, formatCollectiveIntelligenceForPrompt, formatCrossProductContextForPrompt, formatMemoriesForPrompt, formatPreferencesForPrompt, greedyCluster, recordMemory, retrieveRelevantMemories, speakConfigFromEnv, synthesizeSpeech };
+export { AnthropicProvider, type BrainConfig, type CollectivePattern, type ContextGraph, type ConversationTurn, type CrossProductEvent, type CrossProductIdentity, EMBED_DIM, type EmbedInputType, type EmbeddingProvider, type FeedbackEntry, type FeedbackSignal, type FineTuningFormat, type FineTuningPair, type GenomeStore, type KnowledgeChunk, type KnowledgeStore, type LearningStore, type MemoryEntry, type MemorySource, type MemoryStore, type MemoryType, type ModelProvider, type ModelVersion, NoOpContextGraph, NoOpGenomeStore, OllamaProvider, type OpenAICompatConfig, OpenAICompatProvider, type OutcomeRecord, type ProviderMessage, type ProviderResponse, type ProviderTool, type RecordMemoryOpts, type RecordResult, type RetrieveOpts, type RouteDecision, type RouterConfig, RouterProvider, SENSITIVE_PLACEHOLDER, ShiftBrain, type ShiftPersona, type ShiftTool, type SpeakConfig, type SpeakResult, type ThinkOpts, type ThinkResult, type ToolContext, type ToolExecutor, type ToolInputSchema, ToolRegistry, type TrainingJob, type UserPreferences, VoyageEmbeddingProvider, WILL_VOICE_ID, buildSystemPrompt, centroid, cosineSimilarity, definePersona, exportForFineTuning, formatCollectiveIntelligenceForPrompt, formatCrossProductContextForPrompt, formatMemoriesForPrompt, formatPreferencesForPrompt, greedyCluster, realSecret, recordMemory, retrieveRelevantMemories, speakConfigFromEnv, synthesizeSpeech };
