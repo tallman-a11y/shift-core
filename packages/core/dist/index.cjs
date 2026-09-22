@@ -1,6 +1,7 @@
 'use strict';
 
 var Anthropic = require('@anthropic-ai/sdk');
+var crypto = require('crypto');
 
 function _interopDefault (e) { return e && e.__esModule ? e : { default: e }; }
 
@@ -891,6 +892,153 @@ function speakConfigFromEnv(env = process.env) {
     cacheServiceKey: realSecret(env.SHIFT_TTS_CACHE_KEY)
   };
 }
+var API = "https://api.telnyx.com/v2";
+function createFaxClient(config) {
+  const apiKey = () => realSecret(config.apiKey ?? process.env.TELNYX_API_KEY ?? void 0);
+  const publicKey = () => realSecret(config.publicKey ?? process.env.TELNYX_PUBLIC_KEY ?? void 0);
+  const pinnedAppId = () => realSecret(config.faxAppId ?? process.env.TELNYX_FAX_APP_ID ?? void 0);
+  let cachedAppId = null;
+  async function telnyx(path, init = {}) {
+    const key = apiKey();
+    if (!key) throw new Error("TELNYX_API_KEY not configured");
+    const res = await fetch(`${API}${path}`, {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        ...init.headers ?? {}
+      }
+    });
+    const text = await res.text();
+    let json = null;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch {
+    }
+    if (!res.ok) {
+      const errors = json?.errors;
+      const detail = errors?.map((e) => e.detail ?? e.title).join("; ") || text.slice(0, 200);
+      throw new Error(`Telnyx ${res.status} ${path}: ${detail}`);
+    }
+    return json;
+  }
+  async function ensureFaxApplication() {
+    const pinned = pinnedAppId();
+    if (pinned) return pinned;
+    if (cachedAppId) return cachedAppId;
+    const list = await telnyx(
+      `/fax_applications?filter[application_name][contains]=${encodeURIComponent(config.appName)}&page[size]=20`
+    );
+    const existing = list.data?.find((a) => a.application_name === config.appName);
+    if (existing) {
+      if (existing.webhook_event_url !== config.webhookUrl) {
+        await telnyx(`/fax_applications/${existing.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ webhook_event_url: config.webhookUrl })
+        }).catch(() => {
+        });
+      }
+      cachedAppId = existing.id;
+      return existing.id;
+    }
+    const created = await telnyx("/fax_applications", {
+      method: "POST",
+      body: JSON.stringify({ application_name: config.appName, webhook_event_url: config.webhookUrl, active: true })
+    });
+    cachedAppId = created.data.id;
+    return created.data.id;
+  }
+  async function orderFaxNumber(areaCode) {
+    const connectionId = await ensureFaxApplication();
+    const search = async (npa) => {
+      const q = new URLSearchParams({
+        "filter[country_code]": "US",
+        "filter[features][]": "fax",
+        "filter[limit]": "5",
+        "filter[phone_number_type]": "local"
+      });
+      if (npa) q.set("filter[national_destination_code]", npa);
+      const r = await telnyx(`/available_phone_numbers?${q.toString()}`);
+      return r.data ?? [];
+    };
+    let candidates = areaCode ? await search(areaCode) : [];
+    if (candidates.length === 0) candidates = await search(null);
+    if (candidates.length === 0) throw new Error("No fax-capable numbers available right now \u2014 try again in a minute.");
+    const phoneNumber = candidates[0].phone_number;
+    const order = await telnyx("/number_orders", {
+      method: "POST",
+      body: JSON.stringify({ phone_numbers: [{ phone_number: phoneNumber }], connection_id: connectionId })
+    });
+    await telnyx(`/phone_numbers/${encodeURIComponent(phoneNumber)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ connection_id: connectionId })
+    }).catch(() => {
+    });
+    return { phoneNumber, orderId: order.data.id, connectionId };
+  }
+  async function sendFax(params) {
+    const connectionId = params.connectionId ?? await ensureFaxApplication();
+    const r = await telnyx("/faxes", {
+      method: "POST",
+      body: JSON.stringify({ connection_id: connectionId, media_url: params.mediaUrl, to: params.to, from: params.from })
+    });
+    return r.data.id;
+  }
+  return {
+    configured: () => Boolean(apiKey()),
+    ensureFaxApplication,
+    orderFaxNumber,
+    sendFax,
+    verifyWebhook: (rawBody, signatureB64, timestamp) => verifyTelnyxSignature(rawBody, signatureB64, timestamp, publicKey())
+  };
+}
+function toE164(phone) {
+  const d = (phone ?? "").replace(/\D/g, "");
+  if (d.length === 10) return `+1${d}`;
+  if (d.length === 11 && d.startsWith("1")) return `+${d}`;
+  if (d.length > 11 && (phone ?? "").trim().startsWith("+")) return `+${d}`;
+  return null;
+}
+function last10(phone) {
+  const d = (phone ?? "").replace(/\D/g, "");
+  return d.slice(-10);
+}
+function areaCodeOf(phone) {
+  const e = toE164(phone);
+  return e && e.length === 12 ? e.slice(2, 5) : null;
+}
+function formatUS(e164) {
+  const d = e164.replace(/\D/g, "");
+  return d.length === 11 ? `(${d.slice(1, 4)}) ${d.slice(4, 7)}-${d.slice(7)}` : e164;
+}
+var ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
+function verifyTelnyxSignature(rawBody, signatureB64, timestamp, publicKeyB64, nowSec = Math.floor(Date.now() / 1e3)) {
+  if (!signatureB64 || !timestamp || !publicKeyB64) return false;
+  const ts = Number(timestamp);
+  if (!Number.isFinite(ts) || Math.abs(nowSec - ts) > 5 * 60) return false;
+  try {
+    const raw = Buffer.from(publicKeyB64, "base64");
+    if (raw.length !== 32) return false;
+    const key = crypto.createPublicKey({ key: Buffer.concat([ED25519_SPKI_PREFIX, raw]), format: "der", type: "spki" });
+    const sig = Buffer.from(signatureB64, "base64");
+    if (sig.length !== 64) return false;
+    return crypto.verify(null, Buffer.from(`${timestamp}|${rawBody}`), key, sig);
+  } catch {
+    return false;
+  }
+}
+function parseFaxEvent(body) {
+  const data = body?.data;
+  if (!data || typeof data.event_type !== "string" || !data.payload?.fax_id) return null;
+  return data;
+}
+function faxDocumentName(from, pages, at = /* @__PURE__ */ new Date()) {
+  const who = from ? formatUS(from) : "unknown sender";
+  const pg = pages ? ` \u2014 ${pages} page${pages === 1 ? "" : "s"}` : "";
+  const day = at.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  return `Fax from ${who}${pg} \u2014 ${day}.pdf`;
+}
 
 exports.AnthropicProvider = AnthropicProvider;
 exports.EMBED_DIM = EMBED_DIM;
@@ -904,20 +1052,28 @@ exports.ShiftBrain = ShiftBrain;
 exports.ToolRegistry = ToolRegistry;
 exports.VoyageEmbeddingProvider = VoyageEmbeddingProvider;
 exports.WILL_VOICE_ID = WILL_VOICE_ID;
+exports.areaCodeOf = areaCodeOf;
 exports.buildSystemPrompt = buildSystemPrompt;
 exports.centroid = centroid;
 exports.cosineSimilarity = cosineSimilarity;
+exports.createFaxClient = createFaxClient;
 exports.definePersona = definePersona;
 exports.exportForFineTuning = exportForFineTuning;
+exports.faxDocumentName = faxDocumentName;
 exports.formatCollectiveIntelligenceForPrompt = formatCollectiveIntelligenceForPrompt;
 exports.formatCrossProductContextForPrompt = formatCrossProductContextForPrompt;
 exports.formatMemoriesForPrompt = formatMemoriesForPrompt;
 exports.formatPreferencesForPrompt = formatPreferencesForPrompt;
+exports.formatUS = formatUS;
 exports.greedyCluster = greedyCluster;
+exports.last10 = last10;
+exports.parseFaxEvent = parseFaxEvent;
 exports.realSecret = realSecret;
 exports.recordMemory = recordMemory;
 exports.retrieveRelevantMemories = retrieveRelevantMemories;
 exports.speakConfigFromEnv = speakConfigFromEnv;
 exports.synthesizeSpeech = synthesizeSpeech;
+exports.toE164 = toE164;
+exports.verifyTelnyxSignature = verifyTelnyxSignature;
 //# sourceMappingURL=index.cjs.map
 //# sourceMappingURL=index.cjs.map

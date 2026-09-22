@@ -788,4 +788,69 @@ declare function synthesizeSpeech(text: string, cfg: SpeakConfig): Promise<Speak
  */
 declare function speakConfigFromEnv(env?: Record<string, string | undefined>): SpeakConfig;
 
-export { AnthropicProvider, type BrainConfig, type CollectivePattern, type ContextGraph, type ConversationTurn, type CrossProductEvent, type CrossProductIdentity, EMBED_DIM, type EmbedInputType, type EmbeddingProvider, type FeedbackEntry, type FeedbackSignal, type FineTuningFormat, type FineTuningPair, type GenomeStore, type KnowledgeChunk, type KnowledgeStore, type LearningStore, type MemoryEntry, type MemorySource, type MemoryStore, type MemoryType, type ModelProvider, type ModelVersion, NoOpContextGraph, NoOpGenomeStore, OllamaProvider, type OpenAICompatConfig, OpenAICompatProvider, type OutcomeRecord, type ProviderMessage, type ProviderResponse, type ProviderTool, type RecordMemoryOpts, type RecordResult, type RetrieveOpts, type RouteDecision, type RouterConfig, RouterProvider, SENSITIVE_PLACEHOLDER, ShiftBrain, type ShiftPersona, type ShiftTool, type SpeakConfig, type SpeakResult, type ThinkOpts, type ThinkResult, type ToolContext, type ToolExecutor, type ToolInputSchema, ToolRegistry, type TrainingJob, type UserPreferences, VoyageEmbeddingProvider, WILL_VOICE_ID, buildSystemPrompt, centroid, cosineSimilarity, definePersona, exportForFineTuning, formatCollectiveIntelligenceForPrompt, formatCrossProductContextForPrompt, formatMemoriesForPrompt, formatPreferencesForPrompt, greedyCluster, realSecret, recordMemory, retrieveRelevantMemories, speakConfigFromEnv, synthesizeSpeech };
+interface FaxClientConfig {
+    /** Telnyx API v2 key. Defaults to process.env.TELNYX_API_KEY. */
+    apiKey?: string | null;
+    /** Account public key for webhook signatures. Defaults to process.env.TELNYX_PUBLIC_KEY. */
+    publicKey?: string | null;
+    /** The Telnyx fax application this product's numbers route to, e.g. "RealShift Fax". */
+    appName: string;
+    /** Where Telnyx posts events for this product, e.g. https://www.realshiftapp.com/api/webhooks/fax */
+    webhookUrl: string;
+    /** Pin the fax application instead of finding it by name. Defaults to process.env.TELNYX_FAX_APP_ID. */
+    faxAppId?: string | null;
+}
+interface FaxNumberOrder {
+    phoneNumber: string;
+    orderId: string;
+    connectionId: string;
+}
+interface TelnyxFaxEvent {
+    event_type: string;
+    id: string;
+    occurred_at?: string;
+    payload: {
+        fax_id: string;
+        direction?: string;
+        from?: string;
+        to?: string;
+        page_count?: number;
+        media_url?: string;
+        status?: string;
+        failure_reason?: string;
+        connection_id?: string;
+        partial_content?: boolean;
+    };
+}
+interface FaxClient {
+    /** True when an API key is present (a Vercel "[SENSITIVE]" placeholder does not count). */
+    configured(): boolean;
+    /** The fax application inbound numbers point at — found by name or created, once. */
+    ensureFaxApplication(): Promise<string>;
+    /** Search + order one fax-capable US number, local to the area code when possible. */
+    orderFaxNumber(areaCode: string | null): Promise<FaxNumberOrder>;
+    /** Outbound fax of a fetchable (signed) PDF URL. Resolves to the Telnyx fax id. */
+    sendFax(params: {
+        from: string;
+        to: string;
+        mediaUrl: string;
+        connectionId?: string | null;
+    }): Promise<string>;
+    /** Verify a webhook's Ed25519 signature against this product's public key. */
+    verifyWebhook(rawBody: string, signatureB64: string | null, timestamp: string | null): boolean;
+}
+declare function createFaxClient(config: FaxClientConfig): FaxClient;
+/** Digits only; US 10-digit → +1XXXXXXXXXX. */
+declare function toE164(phone: string | null | undefined): string | null;
+/** Last ten digits — how a fax sender is matched to a contact's phone. */
+declare function last10(phone: string | null | undefined): string;
+/** Area code from a US number, for "give me a local fax number". */
+declare function areaCodeOf(phone: string | null | undefined): string | null;
+declare function formatUS(e164: string): string;
+/** Fails closed: no key, no signature, a stale timestamp or a bad signature all return false. */
+declare function verifyTelnyxSignature(rawBody: string, signatureB64: string | null, timestamp: string | null, publicKeyB64: string | null | undefined, nowSec?: number): boolean;
+declare function parseFaxEvent(body: unknown): TelnyxFaxEvent | null;
+/** "Fax from (816) 555-0100 — 4 pages — Sep 21, 2026.pdf" */
+declare function faxDocumentName(from: string | null | undefined, pages: number | null | undefined, at?: Date): string;
+
+export { AnthropicProvider, type BrainConfig, type CollectivePattern, type ContextGraph, type ConversationTurn, type CrossProductEvent, type CrossProductIdentity, EMBED_DIM, type EmbedInputType, type EmbeddingProvider, type FaxClient, type FaxClientConfig, type FaxNumberOrder, type FeedbackEntry, type FeedbackSignal, type FineTuningFormat, type FineTuningPair, type GenomeStore, type KnowledgeChunk, type KnowledgeStore, type LearningStore, type MemoryEntry, type MemorySource, type MemoryStore, type MemoryType, type ModelProvider, type ModelVersion, NoOpContextGraph, NoOpGenomeStore, OllamaProvider, type OpenAICompatConfig, OpenAICompatProvider, type OutcomeRecord, type ProviderMessage, type ProviderResponse, type ProviderTool, type RecordMemoryOpts, type RecordResult, type RetrieveOpts, type RouteDecision, type RouterConfig, RouterProvider, SENSITIVE_PLACEHOLDER, ShiftBrain, type ShiftPersona, type ShiftTool, type SpeakConfig, type SpeakResult, type TelnyxFaxEvent, type ThinkOpts, type ThinkResult, type ToolContext, type ToolExecutor, type ToolInputSchema, ToolRegistry, type TrainingJob, type UserPreferences, VoyageEmbeddingProvider, WILL_VOICE_ID, areaCodeOf, buildSystemPrompt, centroid, cosineSimilarity, createFaxClient, definePersona, exportForFineTuning, faxDocumentName, formatCollectiveIntelligenceForPrompt, formatCrossProductContextForPrompt, formatMemoriesForPrompt, formatPreferencesForPrompt, formatUS, greedyCluster, last10, parseFaxEvent, realSecret, recordMemory, retrieveRelevantMemories, speakConfigFromEnv, synthesizeSpeech, toE164, verifyTelnyxSignature };

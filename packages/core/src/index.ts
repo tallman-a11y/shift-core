@@ -77,3 +77,16 @@ export {
   realSecret,
   SENSITIVE_PLACEHOLDER,
 } from './voice.js';
+
+// Fax — Telnyx behind one client; each product supplies its name, webhook and filing rules
+export type { FaxClient, FaxClientConfig, FaxNumberOrder, TelnyxFaxEvent } from './fax.js';
+export {
+  createFaxClient,
+  toE164,
+  last10,
+  areaCodeOf,
+  formatUS,
+  verifyTelnyxSignature,
+  parseFaxEvent,
+  faxDocumentName,
+} from './fax.js';
