@@ -37,3 +37,7 @@ export { CanvasProvider, useCanvas, GAP, DEFAULT_H, MIN_W, MIN_H, WIDTH_SPAN, ta
 export type {
   CanvasBlock, SavedBlock, SnapLayout, SnapBox, SnapPreview, SnapGhost, BlockWidth, ResolveBlock,
 } from "./CanvasProvider";
+// Window caps + "Duo" (phone) mode: 4 windows on a wide board, 2 stacked on a
+// phone; one more evicts the least-recently-touched unlocked window.
+export { MAX_WINDOWS, MAX_WINDOWS_PHONE, DUO_FOCUS_SHARE, detectMode, maxWindowsFor } from "./duo";
+export type { CanvasMode, CanvasLimits } from "./duo";

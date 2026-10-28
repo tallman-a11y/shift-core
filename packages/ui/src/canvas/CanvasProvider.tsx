@@ -1,6 +1,7 @@
 "use client";
 
 import { type ReactNode, createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { type CanvasLimits, type CanvasMode, capList, detectMode, maxWindowsFor, sameGeometry, tileDuo } from "./duo";
 
 // ── Free-floating canvas engine ───────────────────────────────────────────────
 // Windows live at absolute (x, y) with a free pixel size (w, h) — you can put any
@@ -122,6 +123,11 @@ interface CanvasApi {
   setActiveId: (id: string | null) => void;
   // Measured board width (px) for sizing presets + tiling.
   boardWidth: number;
+  // "wide" (desktop / tablet: free windows, 2×2 cap) or "phone" (Duo: two
+  // windows stacked in focus order, no free move/resize — bringToFront swaps).
+  mode: CanvasMode;
+  // How many windows this board holds before the next one evicts the oldest.
+  maxBlocks: number;
 }
 
 const CanvasContext = createContext<CanvasApi | null>(null);
@@ -296,9 +302,11 @@ function computeSnap(blocks: CanvasBlock[], id: string, layout: SnapLayout, boar
 //   5 → two + two + one full-width;  6 → 2×2×2;  and so on.
 // This is the layout until the user moves or resizes a window, after which their
 // own arrangement is kept. The board scrolls if rows exceed the viewport.
-function tileItems<T extends CanvasBlock>(items: T[], boardW: number, boardH: number): T[] {
+function tileItems<T extends CanvasBlock>(items: T[], boardW: number, boardH: number, mode: CanvasMode = "wide"): T[] {
   const n = items.length;
   if (n === 0) return items;
+  // Phone: the Duo stack (focus order) — see duo.ts.
+  if (mode === "phone") return tileDuo(items, boardW, boardH);
   const availH = Math.max(MIN_H * 2 + GAP, boardH - 150);
   const rows = Math.ceil(n / 2);
   const rowH = Math.max(300, Math.round((availH - GAP * (rows - 1)) / rows));
@@ -366,6 +374,7 @@ export function CanvasProvider({
   addKey = null,
   persist = false,
   savedSession,
+  limits,
 }: {
   children: ReactNode;
   // Host-injected registry lookup: validates a key (non-null) + supplies its default
@@ -375,6 +384,8 @@ export function CanvasProvider({
   initialLayout?: SavedBlock[];
   addKey?: string | null;
   persist?: boolean;
+  // Window caps per mode (defaults: 4 wide, 2 phone — see duo.ts).
+  limits?: CanvasLimits;
   // The full auto-saved layout from a prior visit + the local day it was saved.
   // Used to auto-restore on the SAME day and to power the "Restore last session"
   // button on a new day. Kept in memory so restore works even after auto-save
@@ -390,18 +401,26 @@ export function CanvasProvider({
 
   // Seed the initial blocks and the z-counter together with a pure local counter,
   // so we never read/write a ref during render (React Compiler lint).
+  // Saved order is newest-first, so z is handed out back to front: the FIRST entry
+  // ends up on top and is the last to be evicted by the cap.
   const initial = useMemo(() => {
-    let z = 1;
-    const base: CanvasBlock[] = initialLayout
-      ? initialLayout.filter((b) => b && typeof b.key === "string" && resolveRef.current(b.key)).map((b) => blockFromSaved(b, z++))
-      : initialKeys.filter((k) => resolveRef.current(k)).map((k) => blockFromSaved(k, z++));
-    if (addKey && resolveRef.current(addKey) && !base.some((b) => b.key === addKey)) {
-      base.unshift(blockFromSaved(addKey, z++));
+    const max = maxWindowsFor("wide", limits);
+    const entries: (SavedBlock | string)[] = initialLayout
+      ? initialLayout.filter((b) => b && typeof b.key === "string" && resolveRef.current(b.key))
+      : initialKeys.filter((k) => resolveRef.current(k));
+    if (addKey && resolveRef.current(addKey) && !entries.some((b) => (typeof b === "string" ? b : b.key) === addKey)) {
+      entries.unshift(addKey);
     }
+    const kept = entries.slice(0, max);
+    let z = 1;
+    const base: CanvasBlock[] = kept.map(() => null as unknown as CanvasBlock);
+    for (let i = kept.length - 1; i >= 0; i--) base[i] = blockFromSaved(kept[i], z++);
     return { base, nextZ: z };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   const zRef = useRef(initial.nextZ);
+  const limitsRef = useRef(limits);
+  useEffect(() => { limitsRef.current = limits; }, [limits]);
 
   const [blocks, setBlocks] = useState<CanvasBlock[]>(initial.base);
 
@@ -415,6 +434,11 @@ export function CanvasProvider({
   const [boardWidth, setBoardWidth] = useState(1280);
   const boardRef = useRef(1280);
   const boardHRef = useRef(820);
+  // Device mode (wide / phone). SSR and the first client render agree on "wide";
+  // the measure effect settles the real mode before anything is tiled.
+  const [mode, setMode] = useState<CanvasMode>("wide");
+  const modeRef = useRef<CanvasMode>("wide");
+  const maxFor = (m: CanvasMode) => maxWindowsFor(m, limitsRef.current);
   const persistRef = useRef(persist);
   useEffect(() => { persistRef.current = persist; }, [persist]);
   // Device-fit bookkeeping: fitAdjustRef marks blocks changes that came from
@@ -426,15 +450,35 @@ export function CanvasProvider({
 
   useEffect(() => {
     const measure = () => {
-      const w = Math.max(360, window.innerWidth - 40);
+      // On a phone, innerWidth is the LAYOUT viewport, which Chrome/Safari widen
+      // to fit anything that overflows — windows sized from it would then
+      // overflow in turn and the page would zoom out for good. The visual
+      // viewport is the real screen width, so take the smaller of the two.
+      const vw = Math.min(window.innerWidth, window.visualViewport?.width || Infinity);
+      const w = Math.max(320, vw - 40);
       boardRef.current = w;
       boardHRef.current = Math.max(480, window.innerHeight);
       setBoardWidth(w);
+      const coarse = !!window.matchMedia?.("(pointer: coarse)").matches;
+      const m = detectMode(vw, window.innerHeight, coarse);
+      const modeChanged = m !== modeRef.current;
+      modeRef.current = m;
+      setMode(m);
       // Device fit: windows saved on a wider screen must land on THIS board
       // (clamp; re-tile past 1.5× overflow). Marked via fitAdjustRef so the
       // persist layer treats it as a view concern, never a layout change.
+      // A phone always shows the Duo stack (capped to its limit); crossing back
+      // to wide re-tiles the default layout for the windows that remain.
       setBlocks((prev) => {
-        const next = fitToBoard(prev, w, boardHRef.current);
+        let next: CanvasBlock[];
+        if (m === "phone") {
+          next = tileDuo(capList(prev, maxFor("phone")), w, boardHRef.current);
+          if (sameGeometry(prev, next)) return prev;
+        } else if (modeChanged) {
+          next = tileItems(capList(prev, maxFor("wide")), w, boardHRef.current);
+        } else {
+          next = fitToBoard(prev, w, boardHRef.current);
+        }
         if (next !== prev) fitAdjustRef.current = true;
         return next;
       });
@@ -446,9 +490,11 @@ export function CanvasProvider({
 
   // Apply the default count-based layout to a window set.
   const layoutDefault = useCallback(
-    (list: CanvasBlock[]) => tileItems(list, boardRef.current, boardHRef.current),
+    (list: CanvasBlock[]) => tileItems(list, boardRef.current, boardHRef.current, modeRef.current),
     [],
   );
+  // On a phone every layout is the Duo stack — a saved free arrangement is ignored.
+  const customizedIn = (list: CanvasBlock[]) => modeRef.current !== "phone" && list.some((b) => b.placed);
 
   // Tile the initial windows into the default layout once the board is measured —
   // unless a saved custom arrangement (placed coordinates) was restored.
@@ -456,7 +502,7 @@ export function CanvasProvider({
   useEffect(() => {
     if (tiledOnce.current) return;
     tiledOnce.current = true;
-    setBlocks((prev) => (prev.length === 0 || prev.some((b) => b.placed) ? prev : layoutDefault(prev)));
+    setBlocks((prev) => (prev.length === 0 || customizedIn(prev) ? prev : layoutDefault(prev)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [boardWidth]);
 
@@ -470,8 +516,11 @@ export function CanvasProvider({
     const w = width ?? resolve(key)?.defaultWidth;
     setBlocks((prev) => {
       const existing = prev.find((b) => b.key === key);
-      const customized = prev.some((b) => b.placed);
-      const without = prev.filter((b) => b.key !== key);
+      const customized = customizedIn(prev);
+      // The cap: the new window takes one slot, so the least-recently-touched
+      // unlocked windows leave until the rest fit beside it. A window that is
+      // already open is re-used, never counted twice.
+      const without = capList(prev.filter((b) => b.key !== key), maxFor(modeRef.current) - 1);
 
       if (customized) {
         // Demo composition still stacks below so it can tile a scene.
@@ -540,17 +589,21 @@ export function CanvasProvider({
       const remaining = prev.filter((b) => b.id !== id);
       // Re-flow the default layout when a window closes (3 → 2 side by side, …),
       // unless the user has a custom arrangement.
-      return remaining.length > 0 && !remaining.some((b) => b.placed) ? layoutDefault(remaining) : remaining;
+      return remaining.length > 0 && !customizedIn(remaining) ? layoutDefault(remaining) : remaining;
     });
   }, [layoutDefault]);
 
+  // Free move / resize / snap don't exist on a phone: the Duo stack is the only
+  // arrangement, so every geometry gesture below is a no-op there.
   const resizeBlock = useCallback((id: string, width: BlockWidth) => {
+    if (modeRef.current === "phone") return;
     setBlocks((prev) => prev.map((b) => (b.id === id
       ? { ...b, width, w: pxWidth(WIDTH_SPAN[width], boardRef.current), placed: true, z: zRef.current++ }
       : b)));
   }, []);
 
   const moveTo = useCallback((id: string, x: number, y: number) => {
+    if (modeRef.current === "phone") return;
     const boardW = boardRef.current;
     setBlocks((prev) => prev.map((b) => {
       if (b.id !== id || b.locked) return b; // locked windows don't move
@@ -562,6 +615,7 @@ export function CanvasProvider({
   }, []);
 
   const sizeTo = useCallback((id: string, w: number, h: number) => {
+    if (modeRef.current === "phone") return;
     const boardW = boardRef.current;
     setBlocks((prev) => prev.map((b) => {
       if (b.id !== id || b.locked) return b; // locked windows don't resize
@@ -575,6 +629,7 @@ export function CanvasProvider({
   // Left/top-edge resize: the caller keeps the opposite edge anchored and may pass
   // a negative x/y when dragged past the board; we clamp to the board here.
   const setRect = useCallback((id: string, r: { x: number; y: number; w: number; h: number }) => {
+    if (modeRef.current === "phone") return;
     const boardW = boardRef.current;
     setBlocks((prev) => prev.map((b) => {
       if (b.id !== id || b.locked) return b; // locked windows don't resize
@@ -592,6 +647,7 @@ export function CanvasProvider({
   // Carves around any LOCKED window, and REFLOWS the other unlocked windows into the
   // complementary free space (Windows 11 "snap assist") so nothing gets overlapped.
   const snapTo = useCallback((id: string, layout: SnapLayout) => {
+    if (modeRef.current === "phone") return;
     const boardW = boardRef.current;
     const H = tallH(boardHRef.current);
     setSnapGhost(null);
@@ -647,6 +703,7 @@ export function CanvasProvider({
   // from scratch each frame (reversible — shrink the window back and neighbors restore).
   type Rect = { id: string; x: number; y: number; w: number; h: number; locked?: boolean };
   const resizeRow = useCallback((id: string, x: number, w: number, h: number, origin: Rect[]) => {
+    if (modeRef.current === "phone") return;
     const boardW = boardRef.current;
     const M0 = origin.find((b) => b.id === id);
     if (!M0 || M0.locked) return; // a locked window doesn't resize
@@ -702,15 +759,22 @@ export function CanvasProvider({
     }));
   }, []);
 
+  // On a phone this IS the Duo swap: the window you touch becomes the focused
+  // (top, larger) one and the stack re-tiles in the new focus order.
   const bringToFront = useCallback((id: string) => {
-    setBlocks((prev) => prev.map((b) => (b.id === id ? { ...b, z: zRef.current++ } : b)));
-  }, []);
+    setBlocks((prev) => {
+      if (prev.find((b) => b.id === id)?.z === zRef.current - 1) return prev; // already on top
+      const next = prev.map((b) => (b.id === id ? { ...b, z: zRef.current++ } : b));
+      return modeRef.current === "phone" ? layoutDefault(next) : next;
+    });
+  }, [layoutDefault]);
 
   // Drop resolution. Two behaviors:
   //  1. Dropped INTO a gap between a left and a right neighbor → shrink the dropped
   //     window to fit that gap (tiling-style), instead of shoving neighbors around.
   //  2. Otherwise → nudge every window the dropped one overlaps out of the way.
   const resolveCollisions = useCallback((id: string) => {
+    if (modeRef.current === "phone") return;
     setBlocks((prev) => {
       const moved = prev.find((b) => b.id === id);
       if (!moved) return prev;
@@ -764,10 +828,14 @@ export function CanvasProvider({
     if (!saved || saved.length === 0) return;
     restoredRef.current = true;
     setCanRestore(false);
-    const built = saved
+    // Saved order is newest-first: keep what fits this board's cap and hand out
+    // z back to front so the first entry lands on top.
+    const kept = saved
       .filter((b) => b && typeof b.key === "string" && resolve(b.key))
-      .map((b) => blockFromSaved(b, zRef.current++));
-    const arranged = built.some((b) => b.placed) ? built : layoutDefault(built);
+      .slice(0, maxFor(modeRef.current));
+    const built: CanvasBlock[] = kept.map(() => null as unknown as CanvasBlock);
+    for (let i = kept.length - 1; i >= 0; i--) built[i] = blockFromSaved(kept[i], zRef.current++);
+    const arranged = customizedIn(built) ? built : layoutDefault(built);
     // Restoring a session saved on a wider screen must fit THIS board too
     // (restore happens after mount, so the measure-time fit never sees it).
     const fitted = fitToBoard(arranged, boardRef.current, boardHRef.current);
@@ -796,7 +864,7 @@ export function CanvasProvider({
       const width = d.width;
       setBlocks((prev) => {
         const list = prev.map((b) => (b.key === d.key ? { ...b, width } : b));
-        return prev.some((b) => b.placed) ? list : layoutDefault(list);
+        return customizedIn(prev) ? list : layoutDefault(list);
       });
     }
     function onPlace(e: Event) {
@@ -810,7 +878,7 @@ export function CanvasProvider({
         const [moved] = next.splice(srcIdx, 1);
         const insertAt = next.findIndex((b) => b.key === d.afterKey) + 1;
         next.splice(insertAt, 0, moved);
-        return prev.some((b) => b.placed) ? next : layoutDefault(next);
+        return customizedIn(prev) ? next : layoutDefault(next);
       });
     }
     function onSwap(e: Event) {
@@ -818,7 +886,8 @@ export function CanvasProvider({
       const keys = d?.keys ?? [];
       const contexts = d?.contexts ?? [];
       const widths = d?.widths ?? [];
-      const built: CanvasBlock[] = keys.filter((k) => resolve(k)).map((key, i) => ({
+      // A composed scene is capped like everything else (first keys win).
+      const built: CanvasBlock[] = keys.filter((k) => resolve(k)).slice(0, maxFor(modeRef.current)).map((key, i) => ({
         id: nextId(), key, context: contexts[i], width: widths[i] ?? resolve(key)?.defaultWidth,
         z: zRef.current++, placed: false, x: 0, y: 0, w: 0, h: DEFAULT_H,
       }));
@@ -875,8 +944,12 @@ export function CanvasProvider({
   // endpoint is host-provided via `persist` (PUT /api/canvas-layout).
   const firstRun = useRef(true);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // A phone saves KEYS ONLY (focus order, no geometry): the Duo stack is derived,
+  // and phone-sized rectangles must never come back as a desktop arrangement.
   const layoutSignature = blocks
-    .map((b) => `${b.key}:${b.width ?? ""}:${Math.round(b.x)}:${Math.round(b.y)}:${Math.round(b.w)}:${Math.round(b.h)}`)
+    .map((b) => (mode === "phone"
+      ? `${b.key}:${b.width ?? ""}`
+      : `${b.key}:${b.width ?? ""}:${Math.round(b.x)}:${Math.round(b.y)}:${Math.round(b.w)}:${Math.round(b.h)}`))
     .join("|");
 
   // Latest persistable payload, kept in a ref for the unload flush. Computed via
@@ -888,7 +961,8 @@ export function CanvasProvider({
           savedDay: localDay(),
           blocks: layoutSignature.split("|").map((seg) => {
             const [key, width, x, y, w, h] = seg.split(":");
-            return { key, ...(width ? { width: width as BlockWidth } : {}), x: Number(x), y: Number(y), w: Number(w), h: Number(h) };
+            const base = { key, ...(width ? { width: width as BlockWidth } : {}) };
+            return x === undefined ? base : { ...base, x: Number(x), y: Number(y), w: Number(w), h: Number(h) };
           }),
         }
       : null
@@ -953,7 +1027,8 @@ export function CanvasProvider({
   const api = useMemo<CanvasApi>(() => ({
     blocks, addBlock, removeBlock, resizeBlock, snapTo, snapPreview, previewSnap, clearSnapPreview, snapGhost, moveTo, sizeTo, setRect, resizeRow, bringToFront, resolveCollisions,
     toggleLock, clear, interacting, setInteracting, activeId, setActiveId, boardWidth,
-  }), [blocks, addBlock, removeBlock, resizeBlock, snapTo, snapPreview, previewSnap, clearSnapPreview, snapGhost, moveTo, sizeTo, setRect, resizeRow, bringToFront, resolveCollisions, toggleLock, clear, interacting, activeId, boardWidth]);
+    mode, maxBlocks: maxWindowsFor(mode, limits),
+  }), [blocks, addBlock, removeBlock, resizeBlock, snapTo, snapPreview, previewSnap, clearSnapPreview, snapGhost, moveTo, sizeTo, setRect, resizeRow, bringToFront, resolveCollisions, toggleLock, clear, interacting, activeId, boardWidth, mode, limits]);
 
   return <CanvasContext.Provider value={api}>{children}</CanvasContext.Provider>;
 }

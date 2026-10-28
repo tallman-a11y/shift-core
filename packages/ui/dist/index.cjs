@@ -36,11 +36,14 @@ __export(index_exports, {
   CanvasProvider: () => CanvasProvider,
   CanvasTransition: () => CanvasTransition,
   DEFAULT_H: () => DEFAULT_H,
+  DUO_FOCUS_SHARE: () => DUO_FOCUS_SHARE,
   GAP: () => GAP,
   GenerativeView: () => GenerativeView,
   HolographicShine: () => HolographicShine,
   LiveCard: () => LiveCard,
   LiveStat: () => LiveStat,
+  MAX_WINDOWS: () => MAX_WINDOWS,
+  MAX_WINDOWS_PHONE: () => MAX_WINDOWS_PHONE,
   MIN_H: () => MIN_H,
   MIN_W: () => MIN_W,
   PageTransition: () => PageTransition,
@@ -49,6 +52,8 @@ __export(index_exports, {
   ShiftCard: () => ShiftCard,
   TiltCard: () => TiltCard,
   WIDTH_SPAN: () => WIDTH_SPAN,
+  detectMode: () => detectMode,
+  maxWindowsFor: () => maxWindowsFor,
   tallH: () => tallH,
   useCanvas: () => useCanvas,
   useGenerate: () => useGenerate,
@@ -835,6 +840,59 @@ function PageTransition({ children, className }) {
 
 // src/canvas/CanvasProvider.tsx
 var import_react10 = require("react");
+
+// src/canvas/duo.ts
+var MAX_WINDOWS = 4;
+var MAX_WINDOWS_PHONE = 2;
+var DUO_FOCUS_SHARE = 0.62;
+var PHONE_CHROME = 220;
+var DUO_GAP = 12;
+var DUO_MIN_H = 160;
+function detectMode(innerWidth, innerHeight, coarsePointer) {
+  if (innerWidth < 720) return "phone";
+  if (coarsePointer && Math.min(innerWidth, innerHeight) < 600) return "phone";
+  return "wide";
+}
+function maxWindowsFor(mode, limits) {
+  const n = mode === "phone" ? limits?.phone ?? MAX_WINDOWS_PHONE : limits?.wide ?? MAX_WINDOWS;
+  return Math.max(1, Math.floor(n));
+}
+function capList(list, max, keepId) {
+  let out = list;
+  while (out.length > max) {
+    const victim = out.filter((b) => !b.locked && b.id !== keepId).sort((a, b) => a.z - b.z)[0];
+    if (!victim) break;
+    out = out.filter((b) => b.id !== victim.id);
+  }
+  return out;
+}
+function tileDuo(items, boardW, boardH) {
+  const n = items.length;
+  if (n === 0) return items;
+  const sorted = [...items].sort((a, b) => b.z - a.z);
+  const availH = Math.max(DUO_MIN_H * 2 + DUO_GAP, boardH - PHONE_CHROME);
+  if (n === 1) return [{ ...sorted[0], x: 0, y: 0, w: boardW, h: availH, placed: false }];
+  const minRest = (DUO_MIN_H + DUO_GAP) * (n - 1);
+  const focusH = Math.max(DUO_MIN_H, Math.min(Math.round(availH * DUO_FOCUS_SHARE), availH - minRest));
+  const restH = Math.max(DUO_MIN_H, Math.round((availH - focusH - DUO_GAP * (n - 1)) / (n - 1)));
+  let y = 0;
+  return sorted.map((it, i) => {
+    const h = i === 0 ? focusH : restH;
+    const out = { ...it, x: 0, y, w: boardW, h, placed: false };
+    y += h + DUO_GAP;
+    return out;
+  });
+}
+function sameGeometry(a, b) {
+  if (a.length !== b.length) return false;
+  const byId = new Map(b.map((x) => [x.id, x]));
+  return a.every((x) => {
+    const y = byId.get(x.id);
+    return !!y && x.x === y.x && x.y === y.y && x.w === y.w && x.h === y.h;
+  });
+}
+
+// src/canvas/CanvasProvider.tsx
 var import_jsx_runtime11 = require("react/jsx-runtime");
 var GAP = 20;
 var DEFAULT_H = 420;
@@ -983,9 +1041,10 @@ function computeSnap(blocks, id, layout, boardW, H) {
   }
   return placements;
 }
-function tileItems(items, boardW, boardH) {
+function tileItems(items, boardW, boardH, mode = "wide") {
   const n = items.length;
   if (n === 0) return items;
+  if (mode === "phone") return tileDuo(items, boardW, boardH);
   const availH = Math.max(MIN_H * 2 + GAP, boardH - 150);
   const rows = Math.ceil(n / 2);
   const rowH = Math.max(300, Math.round((availH - GAP * (rows - 1)) / rows));
@@ -1038,7 +1097,8 @@ function CanvasProvider({
   initialLayout,
   addKey = null,
   persist = false,
-  savedSession
+  savedSession,
+  limits
 }) {
   const resolveRef = (0, import_react10.useRef)(resolveBlock);
   (0, import_react10.useEffect)(() => {
@@ -1046,14 +1106,22 @@ function CanvasProvider({
   }, [resolveBlock]);
   const resolve = (key) => resolveRef.current(key);
   const initial = (0, import_react10.useMemo)(() => {
-    let z = 1;
-    const base = initialLayout ? initialLayout.filter((b) => b && typeof b.key === "string" && resolveRef.current(b.key)).map((b) => blockFromSaved(b, z++)) : initialKeys.filter((k) => resolveRef.current(k)).map((k) => blockFromSaved(k, z++));
-    if (addKey && resolveRef.current(addKey) && !base.some((b) => b.key === addKey)) {
-      base.unshift(blockFromSaved(addKey, z++));
+    const max = maxWindowsFor("wide", limits);
+    const entries = initialLayout ? initialLayout.filter((b) => b && typeof b.key === "string" && resolveRef.current(b.key)) : initialKeys.filter((k) => resolveRef.current(k));
+    if (addKey && resolveRef.current(addKey) && !entries.some((b) => (typeof b === "string" ? b : b.key) === addKey)) {
+      entries.unshift(addKey);
     }
+    const kept = entries.slice(0, max);
+    let z = 1;
+    const base = kept.map(() => null);
+    for (let i = kept.length - 1; i >= 0; i--) base[i] = blockFromSaved(kept[i], z++);
     return { base, nextZ: z };
   }, []);
   const zRef = (0, import_react10.useRef)(initial.nextZ);
+  const limitsRef = (0, import_react10.useRef)(limits);
+  (0, import_react10.useEffect)(() => {
+    limitsRef.current = limits;
+  }, [limits]);
   const [blocks, setBlocks] = (0, import_react10.useState)(initial.base);
   const [interacting, setInteracting] = (0, import_react10.useState)(false);
   const [activeId, setActiveId] = (0, import_react10.useState)(null);
@@ -1061,6 +1129,9 @@ function CanvasProvider({
   const [boardWidth, setBoardWidth] = (0, import_react10.useState)(1280);
   const boardRef = (0, import_react10.useRef)(1280);
   const boardHRef = (0, import_react10.useRef)(820);
+  const [mode, setMode] = (0, import_react10.useState)("wide");
+  const modeRef = (0, import_react10.useRef)("wide");
+  const maxFor = (m) => maxWindowsFor(m, limitsRef.current);
   const persistRef = (0, import_react10.useRef)(persist);
   (0, import_react10.useEffect)(() => {
     persistRef.current = persist;
@@ -1069,12 +1140,26 @@ function CanvasProvider({
   const hadUserChangeRef = (0, import_react10.useRef)(false);
   (0, import_react10.useEffect)(() => {
     const measure = () => {
-      const w = Math.max(360, window.innerWidth - 40);
+      const vw = Math.min(window.innerWidth, window.visualViewport?.width || Infinity);
+      const w = Math.max(320, vw - 40);
       boardRef.current = w;
       boardHRef.current = Math.max(480, window.innerHeight);
       setBoardWidth(w);
+      const coarse = !!window.matchMedia?.("(pointer: coarse)").matches;
+      const m = detectMode(vw, window.innerHeight, coarse);
+      const modeChanged = m !== modeRef.current;
+      modeRef.current = m;
+      setMode(m);
       setBlocks((prev) => {
-        const next = fitToBoard(prev, w, boardHRef.current);
+        let next;
+        if (m === "phone") {
+          next = tileDuo(capList(prev, maxFor("phone")), w, boardHRef.current);
+          if (sameGeometry(prev, next)) return prev;
+        } else if (modeChanged) {
+          next = tileItems(capList(prev, maxFor("wide")), w, boardHRef.current);
+        } else {
+          next = fitToBoard(prev, w, boardHRef.current);
+        }
         if (next !== prev) fitAdjustRef.current = true;
         return next;
       });
@@ -1084,22 +1169,23 @@ function CanvasProvider({
     return () => window.removeEventListener("resize", measure);
   }, []);
   const layoutDefault = (0, import_react10.useCallback)(
-    (list) => tileItems(list, boardRef.current, boardHRef.current),
+    (list) => tileItems(list, boardRef.current, boardHRef.current, modeRef.current),
     []
   );
+  const customizedIn = (list) => modeRef.current !== "phone" && list.some((b) => b.placed);
   const tiledOnce = (0, import_react10.useRef)(false);
   (0, import_react10.useEffect)(() => {
     if (tiledOnce.current) return;
     tiledOnce.current = true;
-    setBlocks((prev) => prev.length === 0 || prev.some((b) => b.placed) ? prev : layoutDefault(prev));
+    setBlocks((prev) => prev.length === 0 || customizedIn(prev) ? prev : layoutDefault(prev));
   }, [boardWidth]);
   const addBlock = (0, import_react10.useCallback)((key, context, width, append = false) => {
     if (!resolve(key)) return;
     const w = width ?? resolve(key)?.defaultWidth;
     setBlocks((prev) => {
       const existing = prev.find((b) => b.key === key);
-      const customized = prev.some((b) => b.placed);
-      const without = prev.filter((b) => b.key !== key);
+      const customized = customizedIn(prev);
+      const without = capList(prev.filter((b) => b.key !== key), maxFor(modeRef.current) - 1);
       if (customized) {
         if (append) {
           const startY = without.length ? Math.max(...without.map((b) => b.y + b.h)) + GAP : 0;
@@ -1139,13 +1225,15 @@ function CanvasProvider({
   const removeBlock = (0, import_react10.useCallback)((id) => {
     setBlocks((prev) => {
       const remaining = prev.filter((b) => b.id !== id);
-      return remaining.length > 0 && !remaining.some((b) => b.placed) ? layoutDefault(remaining) : remaining;
+      return remaining.length > 0 && !customizedIn(remaining) ? layoutDefault(remaining) : remaining;
     });
   }, [layoutDefault]);
   const resizeBlock = (0, import_react10.useCallback)((id, width) => {
+    if (modeRef.current === "phone") return;
     setBlocks((prev) => prev.map((b) => b.id === id ? { ...b, width, w: pxWidth(WIDTH_SPAN[width], boardRef.current), placed: true, z: zRef.current++ } : b));
   }, []);
   const moveTo = (0, import_react10.useCallback)((id, x, y) => {
+    if (modeRef.current === "phone") return;
     const boardW = boardRef.current;
     setBlocks((prev) => prev.map((b) => {
       if (b.id !== id || b.locked) return b;
@@ -1155,6 +1243,7 @@ function CanvasProvider({
     }));
   }, []);
   const sizeTo = (0, import_react10.useCallback)((id, w, h) => {
+    if (modeRef.current === "phone") return;
     const boardW = boardRef.current;
     setBlocks((prev) => prev.map((b) => {
       if (b.id !== id || b.locked) return b;
@@ -1164,6 +1253,7 @@ function CanvasProvider({
     }));
   }, []);
   const setRect = (0, import_react10.useCallback)((id, r) => {
+    if (modeRef.current === "phone") return;
     const boardW = boardRef.current;
     setBlocks((prev) => prev.map((b) => {
       if (b.id !== id || b.locked) return b;
@@ -1176,6 +1266,7 @@ function CanvasProvider({
     }));
   }, []);
   const snapTo = (0, import_react10.useCallback)((id, layout) => {
+    if (modeRef.current === "phone") return;
     const boardW = boardRef.current;
     const H = tallH(boardHRef.current);
     setSnapGhost(null);
@@ -1223,6 +1314,7 @@ function CanvasProvider({
   }, [blocks]);
   const clearSnapPreview = (0, import_react10.useCallback)(() => setSnapGhost(null), []);
   const resizeRow = (0, import_react10.useCallback)((id, x, w, h, origin) => {
+    if (modeRef.current === "phone") return;
     const boardW = boardRef.current;
     const M0 = origin.find((b) => b.id === id);
     if (!M0 || M0.locked) return;
@@ -1272,9 +1364,14 @@ function CanvasProvider({
     }));
   }, []);
   const bringToFront = (0, import_react10.useCallback)((id) => {
-    setBlocks((prev) => prev.map((b) => b.id === id ? { ...b, z: zRef.current++ } : b));
-  }, []);
+    setBlocks((prev) => {
+      if (prev.find((b) => b.id === id)?.z === zRef.current - 1) return prev;
+      const next = prev.map((b) => b.id === id ? { ...b, z: zRef.current++ } : b);
+      return modeRef.current === "phone" ? layoutDefault(next) : next;
+    });
+  }, [layoutDefault]);
   const resolveCollisions = (0, import_react10.useCallback)((id) => {
+    if (modeRef.current === "phone") return;
     setBlocks((prev) => {
       const moved = prev.find((b) => b.id === id);
       if (!moved) return prev;
@@ -1317,8 +1414,10 @@ function CanvasProvider({
     if (!saved || saved.length === 0) return;
     restoredRef.current = true;
     setCanRestore(false);
-    const built = saved.filter((b) => b && typeof b.key === "string" && resolve(b.key)).map((b) => blockFromSaved(b, zRef.current++));
-    const arranged = built.some((b) => b.placed) ? built : layoutDefault(built);
+    const kept = saved.filter((b) => b && typeof b.key === "string" && resolve(b.key)).slice(0, maxFor(modeRef.current));
+    const built = kept.map(() => null);
+    for (let i = kept.length - 1; i >= 0; i--) built[i] = blockFromSaved(kept[i], zRef.current++);
+    const arranged = customizedIn(built) ? built : layoutDefault(built);
     const fitted = fitToBoard(arranged, boardRef.current, boardHRef.current);
     if (fitted !== arranged) fitAdjustRef.current = true;
     setBlocks(fitted);
@@ -1341,7 +1440,7 @@ function CanvasProvider({
       const width = d.width;
       setBlocks((prev) => {
         const list = prev.map((b) => b.key === d.key ? { ...b, width } : b);
-        return prev.some((b) => b.placed) ? list : layoutDefault(list);
+        return customizedIn(prev) ? list : layoutDefault(list);
       });
     }
     function onPlace(e) {
@@ -1355,7 +1454,7 @@ function CanvasProvider({
         const [moved] = next.splice(srcIdx, 1);
         const insertAt = next.findIndex((b) => b.key === d.afterKey) + 1;
         next.splice(insertAt, 0, moved);
-        return prev.some((b) => b.placed) ? next : layoutDefault(next);
+        return customizedIn(prev) ? next : layoutDefault(next);
       });
     }
     function onSwap(e) {
@@ -1363,7 +1462,7 @@ function CanvasProvider({
       const keys = d?.keys ?? [];
       const contexts = d?.contexts ?? [];
       const widths = d?.widths ?? [];
-      const built = keys.filter((k) => resolve(k)).map((key, i) => ({
+      const built = keys.filter((k) => resolve(k)).slice(0, maxFor(modeRef.current)).map((key, i) => ({
         id: nextId(),
         key,
         context: contexts[i],
@@ -1420,12 +1519,13 @@ function CanvasProvider({
   }, [blocks.length, canRestore]);
   const firstRun = (0, import_react10.useRef)(true);
   const saveTimer = (0, import_react10.useRef)(null);
-  const layoutSignature = blocks.map((b) => `${b.key}:${b.width ?? ""}:${Math.round(b.x)}:${Math.round(b.y)}:${Math.round(b.w)}:${Math.round(b.h)}`).join("|");
+  const layoutSignature = blocks.map((b) => mode === "phone" ? `${b.key}:${b.width ?? ""}` : `${b.key}:${b.width ?? ""}:${Math.round(b.x)}:${Math.round(b.y)}:${Math.round(b.w)}:${Math.round(b.h)}`).join("|");
   const payload = (0, import_react10.useMemo)(() => layoutSignature ? {
     savedDay: localDay(),
     blocks: layoutSignature.split("|").map((seg) => {
       const [key, width, x, y, w, h] = seg.split(":");
-      return { key, ...width ? { width } : {}, x: Number(x), y: Number(y), w: Number(w), h: Number(h) };
+      const base = { key, ...width ? { width } : {} };
+      return x === void 0 ? base : { ...base, x: Number(x), y: Number(y), w: Number(w), h: Number(h) };
     })
   } : null, [layoutSignature]);
   const payloadRef = (0, import_react10.useRef)(payload);
@@ -1507,8 +1607,10 @@ function CanvasProvider({
     setInteracting,
     activeId,
     setActiveId,
-    boardWidth
-  }), [blocks, addBlock, removeBlock, resizeBlock, snapTo, snapPreview, previewSnap, clearSnapPreview, snapGhost, moveTo, sizeTo, setRect, resizeRow, bringToFront, resolveCollisions, toggleLock, clear, interacting, activeId, boardWidth]);
+    boardWidth,
+    mode,
+    maxBlocks: maxWindowsFor(mode, limits)
+  }), [blocks, addBlock, removeBlock, resizeBlock, snapTo, snapPreview, previewSnap, clearSnapPreview, snapGhost, moveTo, sizeTo, setRect, resizeRow, bringToFront, resolveCollisions, toggleLock, clear, interacting, activeId, boardWidth, mode, limits]);
   return /* @__PURE__ */ (0, import_jsx_runtime11.jsx)(CanvasContext.Provider, { value: api, children });
 }
 
@@ -1737,11 +1839,14 @@ function ShiftBar({ state, dots = 3, size = 7, className = "" }) {
   CanvasProvider,
   CanvasTransition,
   DEFAULT_H,
+  DUO_FOCUS_SHARE,
   GAP,
   GenerativeView,
   HolographicShine,
   LiveCard,
   LiveStat,
+  MAX_WINDOWS,
+  MAX_WINDOWS_PHONE,
   MIN_H,
   MIN_W,
   PageTransition,
@@ -1750,6 +1855,8 @@ function ShiftBar({ state, dots = 3, size = 7, className = "" }) {
   ShiftCard,
   TiltCard,
   WIDTH_SPAN,
+  detectMode,
+  maxWindowsFor,
   tallH,
   useCanvas,
   useGenerate,

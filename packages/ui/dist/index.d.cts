@@ -263,6 +263,17 @@ interface PageTransitionProps {
  */
 declare function PageTransition({ children, className }: PageTransitionProps): react.JSX.Element;
 
+declare const MAX_WINDOWS = 4;
+declare const MAX_WINDOWS_PHONE = 2;
+type CanvasMode = "wide" | "phone";
+type CanvasLimits = {
+    wide?: number;
+    phone?: number;
+};
+declare const DUO_FOCUS_SHARE = 0.62;
+declare function detectMode(innerWidth: number, innerHeight: number, coarsePointer: boolean): CanvasMode;
+declare function maxWindowsFor(mode: CanvasMode, limits?: CanvasLimits): number;
+
 declare const GAP = 20;
 declare const DEFAULT_H = 420;
 declare const MIN_W = 240;
@@ -354,16 +365,19 @@ interface CanvasApi {
     activeId: string | null;
     setActiveId: (id: string | null) => void;
     boardWidth: number;
+    mode: CanvasMode;
+    maxBlocks: number;
 }
 declare function useCanvas(): CanvasApi;
 declare function tallH(boardH: number): number;
-declare function CanvasProvider({ children, resolveBlock, initialKeys, initialLayout, addKey, persist, savedSession, }: {
+declare function CanvasProvider({ children, resolveBlock, initialKeys, initialLayout, addKey, persist, savedSession, limits, }: {
     children: ReactNode;
     resolveBlock: ResolveBlock;
     initialKeys?: string[];
     initialLayout?: SavedBlock[];
     addKey?: string | null;
     persist?: boolean;
+    limits?: CanvasLimits;
     savedSession?: {
         blocks?: SavedBlock[];
         savedDay?: string | null;
@@ -399,4 +413,4 @@ interface ShiftBarProps {
 }
 declare function ShiftBar({ state, dots, size, className }: ShiftBarProps): react.JSX.Element;
 
-export { ACCENT_RGB, type Accent, type BlockWidth, type CanvasBlock, CanvasLauncher, type CanvasLauncherProps, CanvasProvider, CanvasTransition, type CanvasTransitionProps, DEFAULT_H, GAP, type GenPhase, GenerativeView, type GenerativeViewProps, type HeyShiftConfig, type HeyShiftReturn, HolographicShine, type HolographicShineProps, type LauncherGroup, type LauncherItem, LiveCard, type LiveCardProps, LiveStat, type LiveStatProps, MIN_H, MIN_W, PageTransition, type PageTransitionProps, type ResolveBlock, type SavedBlock, ScrollGenerateCard, type ScrollGenerateCardProps, ShiftBar, type ShiftBarProps, type ShiftBarState, ShiftCard, type ShiftCardProps, type SnapBox, type SnapGhost, type SnapLayout, type SnapPreview, TiltCard, type TiltCardProps, type UseGenerateOptions, WIDTH_SPAN, tallH, useCanvas, useGenerate, useHeyShift };
+export { ACCENT_RGB, type Accent, type BlockWidth, type CanvasBlock, CanvasLauncher, type CanvasLauncherProps, type CanvasLimits, type CanvasMode, CanvasProvider, CanvasTransition, type CanvasTransitionProps, DEFAULT_H, DUO_FOCUS_SHARE, GAP, type GenPhase, GenerativeView, type GenerativeViewProps, type HeyShiftConfig, type HeyShiftReturn, HolographicShine, type HolographicShineProps, type LauncherGroup, type LauncherItem, LiveCard, type LiveCardProps, LiveStat, type LiveStatProps, MAX_WINDOWS, MAX_WINDOWS_PHONE, MIN_H, MIN_W, PageTransition, type PageTransitionProps, type ResolveBlock, type SavedBlock, ScrollGenerateCard, type ScrollGenerateCardProps, ShiftBar, type ShiftBarProps, type ShiftBarState, ShiftCard, type ShiftCardProps, type SnapBox, type SnapGhost, type SnapLayout, type SnapPreview, TiltCard, type TiltCardProps, type UseGenerateOptions, WIDTH_SPAN, detectMode, maxWindowsFor, tallH, useCanvas, useGenerate, useHeyShift };
