@@ -829,7 +829,7 @@ function PageTransition({ children, className }) {
     import_framer_motion11.motion.div,
     {
       initial: { opacity: 0, x: dir * 22, filter: "blur(3px)" },
-      animate: { opacity: 1, x: 0, filter: "blur(0px)" },
+      animate: { opacity: 1, x: 0, filter: "blur(0px)", transitionEnd: { filter: "none" } },
       transition: { type: "spring", stiffness: 400, damping: 34 },
       className: className ?? "flex flex-col flex-1 min-h-0",
       children

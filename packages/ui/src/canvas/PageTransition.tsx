@@ -31,7 +31,11 @@ export function PageTransition({ children, className }: PageTransitionProps) {
     <motion.div
       key={pathname}
       initial={{ opacity: 0, x: dir * 22, filter: "blur(3px)" }}
-      animate={{ opacity: 1, x: 0, filter: "blur(0px)" }}
+      // The filter must detach once the entrance lands: a persistent
+      // `filter: blur(0px)` makes this wrapper the containing block for every
+      // `position: fixed` descendant (tab bars, companion pills), which then
+      // pin to the wrapper's bottom instead of the viewport's.
+      animate={{ opacity: 1, x: 0, filter: "blur(0px)", transitionEnd: { filter: "none" } }}
       transition={{ type: "spring", stiffness: 400, damping: 34 }}
       className={className ?? "flex flex-col flex-1 min-h-0"}
     >
