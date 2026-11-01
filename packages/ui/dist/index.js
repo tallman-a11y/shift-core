@@ -2537,6 +2537,7 @@ function useConcierge(opts) {
 
 // src/concierge/ShiftConcierge.tsx
 import { useEffect as useEffect11, useLayoutEffect, useRef as useRef11, useState as useState11 } from "react";
+import { createPortal } from "react-dom";
 import { jsx as jsx14, jsxs as jsxs8 } from "react/jsx-runtime";
 var CPS = 48;
 function useLayout(layout) {
@@ -2638,8 +2639,12 @@ function ShiftConcierge(props) {
       onSend();
     }
   };
+  const [portalTarget, setPortalTarget] = useState11(null);
+  useEffect11(() => {
+    setPortalTarget(mode === "column" ? null : document.body);
+  }, [mode]);
   const listening = barState === "listening";
-  return /* @__PURE__ */ jsxs8(
+  const node = /* @__PURE__ */ jsxs8(
     "aside",
     {
       className: `ash-cg ash-cg--${mode} ash-surface${className ? ` ${className}` : ""}`,
@@ -2701,6 +2706,8 @@ function ShiftConcierge(props) {
       ]
     }
   );
+  if (mode === "column") return node;
+  return portalTarget ? createPortal(node, portalTarget) : node;
 }
 export {
   ACCENT_RGB,

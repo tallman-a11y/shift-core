@@ -1,6 +1,7 @@
 "use client";
 
 import { type KeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ShiftBar } from "../voice/ShiftBar";
 import type { ShiftBarState } from "../voice/useHeyShift";
 import { detectMode } from "../canvas/duo";
@@ -122,8 +123,14 @@ export function ShiftConcierge(props: ShiftConciergeProps) {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); onSend(); }
   };
 
+  // Fixed layouts portal to <body>: any ancestor with a transform/filter (page
+  // transitions keep `filter: blur(0px)`) would otherwise become the containing
+  // block and park the dock at the bottom of the DOCUMENT, not the viewport.
+  const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
+  useEffect(() => { setPortalTarget(mode === "column" ? null : document.body); }, [mode]);
+
   const listening = barState === "listening";
-  return (
+  const node = (
     <aside
       className={`ash-cg ash-cg--${mode} ash-surface${className ? ` ${className}` : ""}`}
       style={mode === "dock" ? { bottom: kb } : undefined}
@@ -190,6 +197,10 @@ export function ShiftConcierge(props: ShiftConciergeProps) {
       </div>
     </aside>
   );
+  if (mode === "column") return node;
+  // Until the portal target exists (first client render) keep the node in place so
+  // SSR markup and the first paint still show Will's line.
+  return portalTarget ? createPortal(node, portalTarget) : node;
 }
 
 export default ShiftConcierge;

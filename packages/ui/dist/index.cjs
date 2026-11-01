@@ -2601,6 +2601,7 @@ function useConcierge(opts) {
 
 // src/concierge/ShiftConcierge.tsx
 var import_react15 = require("react");
+var import_react_dom = require("react-dom");
 var import_jsx_runtime14 = require("react/jsx-runtime");
 var CPS = 48;
 function useLayout(layout) {
@@ -2702,8 +2703,12 @@ function ShiftConcierge(props) {
       onSend();
     }
   };
+  const [portalTarget, setPortalTarget] = (0, import_react15.useState)(null);
+  (0, import_react15.useEffect)(() => {
+    setPortalTarget(mode === "column" ? null : document.body);
+  }, [mode]);
   const listening = barState === "listening";
-  return /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)(
+  const node = /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)(
     "aside",
     {
       className: `ash-cg ash-cg--${mode} ash-surface${className ? ` ${className}` : ""}`,
@@ -2765,6 +2770,8 @@ function ShiftConcierge(props) {
       ]
     }
   );
+  if (mode === "column") return node;
+  return portalTarget ? (0, import_react_dom.createPortal)(node, portalTarget) : node;
 }
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
