@@ -96,6 +96,7 @@ The scripts above are the *feel*, not final copy.
 - **Changes (driver side):** `/driver/login` gets Will's greeting ("Pick your name and type your PIN — or just tell me who you are") with `set_name` matching the driver list; PIN is typed only. The native driver app (Expo) inherits the same script through the web view later (Phase 4 shells).
 - **API:** `/api/concierge` as RealShift's, calling `runConcierge` with `signedIn=false` on landing/register and `true` on `/setup`; the speak route is already open to the dashboard — open it to signed-out callers with IP + daily caps.
 - **Phase:** 2b, after AgentShift + FundShift, before AbleShift (contractor acquisition is the paying funnel).
+- **Status 2026-11-01:** BUILT on gso-frontend `feat/canvas-revamp` (f539a88) exactly as above, with two product-side additions worth folding into the engine: the route maps finish/save/submit to "done" and forces next/back on bare commands (the model sometimes chats instead of calling the tool), and email fills are copied verbatim from the user's message (Haiku dropped a letter once). The driver script reads a `driverMatch` state so the greeting is honest when a first name is ambiguous. Not live until the branch is promoted and the Vercel env carries the flag + ElevenLabs keys.
 
 ## 5. Build order
 
