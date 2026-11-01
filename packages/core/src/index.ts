@@ -90,3 +90,15 @@ export {
   parseFaxEvent,
   faxDocumentName,
 } from './fax.js';
+
+// Shift Concierge — Will-first onboarding tool pack + prompt (UI actions only;
+// never writes a database). See shift-core/docs/WILL_FIRST_UI.md.
+export type { ConciergeMoment, ConciergeFieldSnapshot, ConciergeContext, ConciergeAction, ConciergeTurn } from './concierge.js';
+export {
+  CONCIERGE_TOOL_NAMES,
+  conciergeTools,
+  parseConciergeToolUse,
+  formatFieldsForPrompt,
+  buildConciergeSystemPrompt,
+  runConcierge,
+} from './concierge.js';

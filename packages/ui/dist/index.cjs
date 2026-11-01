@@ -35,29 +35,56 @@ __export(index_exports, {
   CanvasLauncher: () => CanvasLauncher,
   CanvasProvider: () => CanvasProvider,
   CanvasTransition: () => CanvasTransition,
+  ConciergeField: () => ConciergeField,
+  ConciergeFields: () => ConciergeFields,
   DEFAULT_H: () => DEFAULT_H,
   DUO_FOCUS_SHARE: () => DUO_FOCUS_SHARE,
+  FILL_HIGHLIGHT_MS: () => FILL_HIGHLIGHT_MS,
   GAP: () => GAP,
   GenerativeView: () => GenerativeView,
   HolographicShine: () => HolographicShine,
   LiveCard: () => LiveCard,
   LiveStat: () => LiveStat,
+  MAX_LINES: () => MAX_LINES,
   MAX_WINDOWS: () => MAX_WINDOWS,
   MAX_WINDOWS_PHONE: () => MAX_WINDOWS_PHONE,
   MIN_H: () => MIN_H,
   MIN_W: () => MIN_W,
   PageTransition: () => PageTransition,
+  SILENCE_MS: () => SILENCE_MS,
   ScrollGenerateCard: () => ScrollGenerateCard,
   ShiftBar: () => ShiftBar,
   ShiftCard: () => ShiftCard,
+  ShiftConcierge: () => ShiftConcierge,
   TiltCard: () => TiltCard,
   WIDTH_SPAN: () => WIDTH_SPAN,
+  WINDOW_MS: () => WINDOW_MS,
+  cleanName: () => cleanName,
+  coerceFill: () => coerceFill,
+  coerceFills: () => coerceFills,
+  conciergeReducer: () => conciergeReducer,
   detectMode: () => detectMode,
+  endsWithQuestion: () => endsWithQuestion,
+  greetingForHour: () => greetingForHour,
+  initialConciergeState: () => initialConciergeState,
+  isShiftShell: () => isShiftShell,
+  matchOption: () => matchOption,
   maxWindowsFor: () => maxWindowsFor,
+  nextLineId: () => nextLineId,
+  parseMoney: () => parseMoney,
+  requestMicrophone: () => requestMicrophone,
+  snapshotForPrompt: () => snapshotForPrompt,
+  summarizeFills: () => summarizeFills,
   tallH: () => tallH,
+  useAudioGate: () => useAudioGate,
   useCanvas: () => useCanvas,
+  useConcierge: () => useConcierge,
+  useConciergeFields: () => useConciergeFields,
+  useConciergeNav: () => useConciergeNav,
   useGenerate: () => useGenerate,
-  useHeyShift: () => useHeyShift
+  useHeyShift: () => useHeyShift,
+  webSpeechListener: () => webSpeechListener,
+  webSpeechSupported: () => webSpeechSupported
 });
 module.exports = __toCommonJS(index_exports);
 
@@ -1832,33 +1859,967 @@ function ShiftBar({ state, dots = 3, size = 7, className = "" }) {
     )
   ] });
 }
+
+// src/concierge/concierge.ts
+var MAX_LINES = 40;
+function initialConciergeState(moment = "landing") {
+  return { moment, name: null, micChoice: "unset", muted: false, voiceUnlocked: false, lines: [], busy: false };
+}
+var lineSeq = 0;
+function nextLineId() {
+  lineSeq += 1;
+  return `l${Date.now().toString(36)}${lineSeq}`;
+}
+function conciergeReducer(state, ev) {
+  switch (ev.type) {
+    case "unlockVoice":
+      return state.voiceUnlocked ? state : { ...state, voiceUnlocked: true };
+    case "chooseMic":
+      if (state.micChoice === "denied" && ev.choice === "voice") return state;
+      return { ...state, micChoice: ev.choice };
+    case "setName":
+      return { ...state, name: ev.name };
+    case "will":
+    case "user": {
+      const line = { id: ev.id ?? nextLineId(), who: ev.type, text: ev.text, at: Date.now() };
+      const lines = [...state.lines, line];
+      return { ...state, lines: lines.length > MAX_LINES ? lines.slice(lines.length - MAX_LINES) : lines };
+    }
+    case "moment":
+      return state.moment === ev.moment ? state : { ...state, moment: ev.moment };
+    case "mute":
+      return { ...state, muted: ev.muted };
+    case "busy":
+      return { ...state, busy: ev.busy };
+    default:
+      return state;
+  }
+}
+function greetingForHour(hour) {
+  if (hour >= 5 && hour < 12) return "Good morning";
+  if (hour >= 12 && hour < 17) return "Good afternoon";
+  return "Good evening";
+}
+var NAME_PREFIX = /^(?:hi|hello|hey|yo|um+|uh+|well|so|ok(?:ay)?)[,.!\s]+/i;
+var NAME_LEAD = /^(?:my name(?:'s| is)|i am|i'm|im|it's|its|this is|call me|name's|name is|they call me)\s+/i;
+function cleanName(raw) {
+  let s = raw.trim().replace(/\s+/g, " ");
+  if (!s) return null;
+  s = s.replace(NAME_PREFIX, "");
+  s = s.replace(NAME_LEAD, "");
+  s = s.replace(/[.!?,;:"']+$/g, "").trim();
+  s = s.split(/[,.!?;]/)[0].trim();
+  if (!s) return null;
+  const words = s.split(" ");
+  if (words.length > 4) return null;
+  if (!/^[\p{L}\p{M}'’\-\s]+$/u.test(s)) return null;
+  const titled = words.map((w) => w.length <= 1 ? w.toUpperCase() : w[0].toUpperCase() + w.slice(1)).join(" ");
+  return titled.slice(0, 60);
+}
+var WORD_NUMBERS = {
+  zero: 0,
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  thirteen: 13,
+  fourteen: 14,
+  fifteen: 15,
+  sixteen: 16,
+  seventeen: 17,
+  eighteen: 18,
+  nineteen: 19,
+  twenty: 20,
+  thirty: 30,
+  forty: 40,
+  fifty: 50,
+  sixty: 60,
+  seventy: 70,
+  eighty: 80,
+  ninety: 90,
+  hundred: 100
+};
+function parseMoney(input) {
+  if (typeof input === "number") return Number.isFinite(input) ? input : null;
+  if (typeof input !== "string") return null;
+  let s = input.toLowerCase().replace(/[$,]/g, "").replace(/\b(about|around|roughly|approximately|maybe|like)\b/g, "").trim();
+  if (!s) return null;
+  let mult = 1;
+  if (/\b(million|mil|mm)\b|m$/.test(s)) mult = 1e6;
+  else if (/\b(thousand|grand)\b|k$/.test(s)) mult = 1e3;
+  s = s.replace(/\b(million|mil|mm|thousand|grand)\b/g, "").replace(/[km]$/, "").trim();
+  const num = Number(s);
+  if (Number.isFinite(num) && s !== "") return Math.round(num * mult);
+  const words = s.split(/[\s-]+/).filter(Boolean);
+  let total = 0;
+  let current = 0;
+  let sawWord = false;
+  for (const w of words) {
+    const n = WORD_NUMBERS[w];
+    if (n === void 0) {
+      if (w === "and") continue;
+      return null;
+    }
+    sawWord = true;
+    if (n === 100) current = Math.max(current, 1) * 100;
+    else current += n;
+  }
+  total += current;
+  return sawWord ? Math.round(total * mult) : null;
+}
+function norm(s) {
+  return s.toLowerCase().replace(/&/g, " and ").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+}
+function tokens(s) {
+  return norm(s).split(" ").filter(Boolean);
+}
+function stemEq(a, b) {
+  if (a === b) return true;
+  if (Math.min(a.length, b.length) < 4) return false;
+  return a.startsWith(b) || b.startsWith(a);
+}
+function uniqueBest(options, score) {
+  const scored = options.map((o) => ({ o, s: score(o) })).filter((x) => x.s > 0);
+  if (!scored.length) return void 0;
+  const best = Math.max(...scored.map((x) => x.s));
+  const top = scored.filter((x) => x.s === best);
+  return top.length === 1 ? top[0].o : null;
+}
+function matchOption(options, value) {
+  if (value === null || value === void 0) return null;
+  const v = String(value).trim();
+  if (!v) return null;
+  const exact = options.find((o) => o.value === v) ?? options.find((o) => o.label === v);
+  if (exact) return exact;
+  const nv = norm(v);
+  const ci = options.find((o) => norm(o.value) === nv) ?? options.find((o) => norm(o.label) === nv);
+  if (ci) return ci;
+  const inTok = tokens(v);
+  if (!inTok.length) return null;
+  const byWords = uniqueBest(options, (o) => {
+    const ot = Array.from(/* @__PURE__ */ new Set([...tokens(o.label), ...tokens(o.value)]));
+    return inTok.filter((t) => ot.some((x) => stemEq(t, x))).length;
+  });
+  if (byWords !== void 0) return byWords;
+  const byDesc = uniqueBest(options, (o) => {
+    if (!o.description) return 0;
+    const dt = tokens(o.description);
+    return inTok.filter((t) => dt.some((x) => stemEq(t, x))).length;
+  });
+  return byDesc ?? null;
+}
+function splitList(value) {
+  if (Array.isArray(value)) return value.map((v) => String(v).trim()).filter(Boolean);
+  if (typeof value !== "string") return value === null || value === void 0 ? [] : [String(value)];
+  return value.split(/\s*(?:,|;|\band\b|\bplus\b|\n)\s*/i).map((s) => s.trim()).filter(Boolean);
+}
+function coerceFill(spec, value) {
+  const { id } = spec;
+  switch (spec.type) {
+    case "select": {
+      const opt = matchOption(spec.options ?? [], value);
+      return opt ? { id, ok: true, value: opt.value } : { id, ok: false, reason: `"${String(value)}" is not one of the choices` };
+    }
+    case "multi": {
+      const parts = splitList(value);
+      if (parts.length === 0) return { id, ok: false, reason: "nothing to add" };
+      if (spec.options?.length) {
+        const vals = parts.map((p) => matchOption(spec.options, p)?.value).filter((v) => !!v);
+        if (!vals.length) return { id, ok: false, reason: "none of those matched the choices" };
+        return { id, ok: true, value: Array.from(new Set(vals)) };
+      }
+      return { id, ok: true, value: Array.from(new Set(parts)) };
+    }
+    case "number":
+    case "money": {
+      const n = parseMoney(value);
+      return n === null ? { id, ok: false, reason: `"${String(value)}" is not a number` } : { id, ok: true, value: n };
+    }
+    case "tel": {
+      const digits = String(value ?? "").replace(/[^\d+]/g, "");
+      return digits.replace(/\D/g, "").length >= 7 ? { id, ok: true, value: String(value).trim() } : { id, ok: false, reason: "that doesn't look like a phone number" };
+    }
+    case "email": {
+      const s = String(value ?? "").trim();
+      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s) ? { id, ok: true, value: s } : { id, ok: false, reason: "that doesn't look like an email" };
+    }
+    case "text":
+    default: {
+      const s = Array.isArray(value) ? value.join(", ") : String(value ?? "").trim();
+      return s ? { id, ok: true, value: s } : { id, ok: false, reason: "empty" };
+    }
+  }
+}
+function coerceFills(fields, fills) {
+  const byId = new Map(fields.map((f) => [f.id, f]));
+  return fills.map((f) => {
+    const spec = byId.get(f.id);
+    return spec ? coerceFill(spec, f.value) : { id: f.id, ok: false, reason: "no such field on this step" };
+  });
+}
+function snapshotForPrompt(fields) {
+  if (!fields.length) return "(no fields on this step)";
+  return fields.map((f) => {
+    const cur = f.value === null || f.value === void 0 || f.value === "" || Array.isArray(f.value) && !f.value.length ? "empty" : `"${Array.isArray(f.value) ? f.value.join(", ") : String(f.value)}"`;
+    const opts = f.options?.length ? ` choices: ${f.options.map((o) => `${o.value}=${o.label}`).join(" | ")}` : "";
+    return `- ${f.id} \u2014 ${f.label} [${f.type}${f.required ? ", required" : ""}] currently ${cur}.${opts}${f.hint ? ` (${f.hint})` : ""}`;
+  }).join("\n");
+}
+function summarizeFills(fields, results) {
+  const byId = new Map(fields.map((f) => [f.id, f]));
+  const ok = results.filter((r) => r.ok);
+  if (!ok.length) return "";
+  const parts = ok.map((r) => {
+    const spec = byId.get(r.id);
+    const label = spec?.label ?? r.id;
+    const shown = spec?.type === "select" && spec.options ? spec.options.find((o) => o.value === r.value)?.label ?? String(r.value) : Array.isArray(r.value) ? r.value.join(", ") : spec?.type === "money" ? `$${Number(r.value).toLocaleString()}` : String(r.value);
+    return `${shown} under ${label}`;
+  });
+  return parts.length === 1 ? `I put ${parts[0]}.` : `I put ${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}.`;
+}
+function endsWithQuestion(text) {
+  return /\?\s*$/.test(text.trim());
+}
+
+// src/concierge/FieldRegistry.tsx
+var import_react12 = require("react");
+var import_jsx_runtime13 = require("react/jsx-runtime");
+var Ctx = (0, import_react12.createContext)(null);
+var FILL_HIGHLIGHT_MS = 2e3;
+function ConciergeFields({ children }) {
+  const entries = (0, import_react12.useRef)(/* @__PURE__ */ new Map());
+  const [justFilled, setJustFilled] = (0, import_react12.useState)(/* @__PURE__ */ new Set());
+  const [nav, setNavState] = (0, import_react12.useState)(null);
+  const [version, setVersion] = (0, import_react12.useState)(0);
+  const timers = (0, import_react12.useRef)(/* @__PURE__ */ new Map());
+  const register = (0, import_react12.useCallback)((entry) => {
+    const had = entries.current.has(entry.spec.id);
+    entries.current.set(entry.spec.id, entry);
+    if (!had) setVersion((v) => v + 1);
+  }, []);
+  const unregister = (0, import_react12.useCallback)((id) => {
+    if (entries.current.delete(id)) setVersion((v) => v + 1);
+  }, []);
+  const snapshot = (0, import_react12.useCallback)(() => {
+    return [...entries.current.values()].map((e) => ({ ...e.spec, value: e.get() }));
+  }, []);
+  const apply = (0, import_react12.useCallback)((fills) => {
+    const results = coerceFills(snapshot(), fills);
+    const landed = [];
+    for (const r of results) {
+      if (!r.ok) continue;
+      const e = entries.current.get(r.id);
+      if (!e) continue;
+      e.set(r.value);
+      landed.push(r.id);
+    }
+    if (landed.length) {
+      setJustFilled((prev) => /* @__PURE__ */ new Set([...prev, ...landed]));
+      for (const id of landed) {
+        const t = timers.current.get(id);
+        if (t) clearTimeout(t);
+        timers.current.set(
+          id,
+          setTimeout(() => {
+            timers.current.delete(id);
+            setJustFilled((prev) => {
+              if (!prev.has(id)) return prev;
+              const next = new Set(prev);
+              next.delete(id);
+              return next;
+            });
+          }, FILL_HIGHLIGHT_MS)
+        );
+      }
+    }
+    return results;
+  }, [snapshot]);
+  const setNav = (0, import_react12.useCallback)((n) => {
+    setNavState((prev) => {
+      if (prev === n) return prev;
+      if (prev && n && prev.stepIndex === n.stepIndex && prev.stepTitle === n.stepTitle && prev.stepCount === n.stepCount && prev.canAdvance === n.canAdvance && prev.next === n.next && prev.prev === n.prev) return prev;
+      return n;
+    });
+  }, []);
+  (0, import_react12.useEffect)(() => () => {
+    for (const t of timers.current.values()) clearTimeout(t);
+  }, []);
+  const value = (0, import_react12.useMemo)(
+    () => ({ register, unregister, snapshot, apply, justFilled, nav, setNav, version }),
+    [register, unregister, snapshot, apply, justFilled, nav, setNav, version]
+  );
+  return /* @__PURE__ */ (0, import_jsx_runtime13.jsx)(Ctx.Provider, { value, children });
+}
+function useConciergeFields() {
+  return (0, import_react12.useContext)(Ctx);
+}
+function ConciergeField({ spec, value, onChange, children, className = "" }) {
+  const ctx = (0, import_react12.useContext)(Ctx);
+  const valueRef = (0, import_react12.useRef)(value);
+  const onChangeRef = (0, import_react12.useRef)(onChange);
+  const specRef = (0, import_react12.useRef)(spec);
+  valueRef.current = value;
+  onChangeRef.current = onChange;
+  specRef.current = spec;
+  const id = spec.id;
+  (0, import_react12.useEffect)(() => {
+    if (!ctx) return;
+    ctx.register({
+      spec: specRef.current,
+      get: () => valueRef.current,
+      set: (v) => onChangeRef.current(v)
+    });
+    return () => ctx.unregister(id);
+  }, [id, ctx?.register, ctx?.unregister]);
+  const filled = ctx?.justFilled.has(id) ?? false;
+  return /* @__PURE__ */ (0, import_jsx_runtime13.jsx)("div", { "data-concierge-field": id, className: `ash-cg-field${filled ? " ash-cg-filled" : ""}${className ? ` ${className}` : ""}`, children });
+}
+function useConciergeNav(nav) {
+  const ctx = (0, import_react12.useContext)(Ctx);
+  const setNav = ctx?.setNav;
+  (0, import_react12.useEffect)(() => {
+    if (!setNav) return;
+    setNav(nav);
+    return () => setNav(null);
+  }, [setNav, nav]);
+}
+
+// src/concierge/useAudioGate.ts
+var import_react13 = require("react");
+function isShiftShell(ua) {
+  const s = ua ?? (typeof navigator !== "undefined" ? navigator.userAgent : "");
+  return /ShiftApp\//i.test(s);
+}
+function useAudioGate(onUnlock) {
+  const [shell] = (0, import_react13.useState)(() => isShiftShell());
+  const [unlocked, setUnlocked] = (0, import_react13.useState)(() => isShiftShell());
+  const cb = (0, import_react13.useRef)(onUnlock);
+  cb.current = onUnlock;
+  const fired = (0, import_react13.useRef)(false);
+  (0, import_react13.useEffect)(() => {
+    if (unlocked) {
+      if (!fired.current) {
+        fired.current = true;
+        cb.current?.();
+      }
+      return;
+    }
+    const unlock = () => {
+      if (fired.current) return;
+      fired.current = true;
+      setUnlocked(true);
+      cb.current?.();
+      remove();
+    };
+    const opts = { capture: true, passive: true };
+    const remove = () => {
+      window.removeEventListener("pointerdown", unlock, opts);
+      window.removeEventListener("keydown", unlock, opts);
+      window.removeEventListener("touchend", unlock, opts);
+    };
+    window.addEventListener("pointerdown", unlock, opts);
+    window.addEventListener("keydown", unlock, opts);
+    window.addEventListener("touchend", unlock, opts);
+    return remove;
+  }, [unlocked]);
+  return { unlocked, shell };
+}
+
+// src/concierge/listeners.ts
+function webSpeechSupported() {
+  if (typeof window === "undefined") return false;
+  const w = window;
+  return !!(w.SpeechRecognition ?? w.webkitSpeechRecognition);
+}
+var SILENCE_MS = 1800;
+var WINDOW_MS = 15e3;
+function webSpeechListener(lang = "en-US") {
+  if (!webSpeechSupported()) return null;
+  const w = window;
+  const Ctor = w.SpeechRecognition ?? w.webkitSpeechRecognition;
+  let rec = null;
+  let silence = null;
+  let window_ = null;
+  let finalText = "";
+  let ended = false;
+  const clear = () => {
+    if (silence) clearTimeout(silence);
+    if (window_) clearTimeout(window_);
+    silence = null;
+    window_ = null;
+  };
+  return {
+    start(h) {
+      if (rec) return;
+      finalText = "";
+      ended = false;
+      const r = new Ctor();
+      rec = r;
+      r.continuous = true;
+      r.interimResults = true;
+      r.lang = lang;
+      r.onresult = (e) => {
+        let interim = "";
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          const res = e.results[i];
+          if (res.isFinal) finalText = `${finalText} ${res[0].transcript}`.trim();
+          else interim = `${interim} ${res[0].transcript}`.trim();
+        }
+        h.onText(`${finalText} ${interim}`.trim(), false);
+        if (window_) {
+          clearTimeout(window_);
+          window_ = null;
+        }
+        if (finalText) {
+          if (silence) clearTimeout(silence);
+          silence = setTimeout(() => {
+            silence = null;
+            try {
+              r.stop();
+            } catch {
+            }
+          }, SILENCE_MS);
+        }
+      };
+      r.onend = () => {
+        clear();
+        rec = null;
+        if (ended) return;
+        ended = true;
+        if (finalText) h.onText(finalText, true);
+        h.onEnd();
+      };
+      r.onerror = (e) => {
+        const code = e?.error ?? "error";
+        if (code !== "no-speech" && code !== "aborted") h.onError(code);
+      };
+      try {
+        r.start();
+      } catch {
+        rec = null;
+        h.onError("start-failed");
+        return;
+      }
+      window_ = setTimeout(() => {
+        try {
+          r.stop();
+        } catch {
+        }
+      }, WINDOW_MS);
+    },
+    stop() {
+      clear();
+      const r = rec;
+      if (!r) return;
+      try {
+        r.stop();
+      } catch {
+      }
+    }
+  };
+}
+async function requestMicrophone() {
+  if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) return false;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    stream.getTracks().forEach((t) => t.stop());
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// src/concierge/useConcierge.ts
+var import_react14 = require("react");
+function useConcierge(opts) {
+  const { script, adapters, enabled = true, initialMoment = "landing", nameFieldId, fields = null, initialMuted = false, initialName = null } = opts;
+  const [state, dispatch] = (0, import_react14.useReducer)(conciergeReducer, void 0, () => ({ ...initialConciergeState(initialMoment), muted: initialMuted, name: initialName }));
+  const [input, setInput] = (0, import_react14.useState)("");
+  const [speaking, setSpeaking] = (0, import_react14.useState)(false);
+  const [listening, setListening] = (0, import_react14.useState)(false);
+  const [thinking, setThinking] = (0, import_react14.useState)(false);
+  const S = (0, import_react14.useRef)(state);
+  S.current = state;
+  const A = (0, import_react14.useRef)(adapters);
+  A.current = adapters;
+  const F = (0, import_react14.useRef)(fields);
+  F.current = fields;
+  const listenerRef = (0, import_react14.useRef)(null);
+  const pendingSpeech = (0, import_react14.useRef)(null);
+  const announced = (0, import_react14.useRef)(/* @__PURE__ */ new Set());
+  const speakGen = (0, import_react14.useRef)(0);
+  const speakNow = (0, import_react14.useCallback)(async (text) => {
+    const gen = ++speakGen.current;
+    setSpeaking(true);
+    try {
+      await A.current.speak(text);
+    } finally {
+      if (gen === speakGen.current) {
+        setSpeaking(false);
+        if (S.current.micChoice === "voice" && endsWithQuestion(text) && !S.current.muted) startListeningRef.current();
+      }
+    }
+  }, []);
+  const { unlocked } = useAudioGate(() => {
+    dispatch({ type: "unlockVoice" });
+    const p = pendingSpeech.current;
+    pendingSpeech.current = null;
+    if (p && !S.current.muted) void speakNow(p);
+  });
+  const say = (0, import_react14.useCallback)((text) => {
+    if (!text) return;
+    dispatch({ type: "will", text, id: nextLineId() });
+    if (S.current.muted) return;
+    if (unlocked || S.current.voiceUnlocked) {
+      pendingSpeech.current = null;
+      void speakNow(text);
+    } else {
+      pendingSpeech.current = text;
+    }
+  }, [unlocked, speakNow]);
+  const stopListening = (0, import_react14.useCallback)(() => {
+    listenerRef.current?.stop();
+    listenerRef.current = null;
+    setListening(false);
+  }, []);
+  const startListeningRef = (0, import_react14.useRef)(() => void 0);
+  const startListening = (0, import_react14.useCallback)(() => {
+    if (listenerRef.current || S.current.muted || S.current.micChoice !== "voice") return;
+    const make = A.current.listen ?? (() => webSpeechListener());
+    const l = make();
+    if (!l) return;
+    listenerRef.current = l;
+    setListening(true);
+    let heard = false;
+    l.start({
+      onText: (text, final) => {
+        heard = heard || !!text;
+        setInput(text);
+        if (final && text.trim()) {
+          listenerRef.current = null;
+          setListening(false);
+          void sendRef.current(text);
+        }
+      },
+      onEnd: () => {
+        listenerRef.current = null;
+        setListening(false);
+        if (!heard && S.current.moment === "askName") say(script.lines.heardNothing());
+      },
+      onError: (code) => {
+        listenerRef.current = null;
+        setListening(false);
+        if (code === "not-allowed" || code === "service-not-allowed") {
+          dispatch({ type: "chooseMic", choice: "denied" });
+          say(script.lines.micDenied());
+        }
+      }
+    });
+  }, [say, script]);
+  startListeningRef.current = startListening;
+  const chooseMic = (0, import_react14.useCallback)((choice) => {
+    if (choice === "voice") {
+      const req = A.current.requestMic ?? requestMicrophone;
+      void req().then((ok) => {
+        if (ok) {
+          dispatch({ type: "chooseMic", choice: "voice" });
+          dispatch({ type: "unlockVoice" });
+          const p = pendingSpeech.current;
+          pendingSpeech.current = null;
+          if (p && !S.current.muted) void speakNow(p);
+          else startListeningRef.current();
+        } else {
+          dispatch({ type: "chooseMic", choice: "denied" });
+          say(script.lines.micDenied());
+        }
+      });
+      return;
+    }
+    dispatch({ type: "chooseMic", choice });
+  }, [say, script, speakNow]);
+  const onMic = (0, import_react14.useCallback)(() => {
+    if (listenerRef.current) {
+      stopListening();
+      return;
+    }
+    if (S.current.micChoice === "voice") {
+      A.current.cancelSpeech();
+      setSpeaking(false);
+      startListening();
+      return;
+    }
+    if (S.current.micChoice === "denied") {
+      say(script.lines.micDenied());
+      return;
+    }
+    chooseMic("voice");
+  }, [chooseMic, say, script, startListening, stopListening]);
+  const toggleMute = (0, import_react14.useCallback)(() => {
+    const next = !S.current.muted;
+    dispatch({ type: "mute", muted: next });
+    if (next) {
+      A.current.cancelSpeech();
+      setSpeaking(false);
+      stopListening();
+      pendingSpeech.current = null;
+    }
+  }, [stopListening]);
+  const handleName = (0, import_react14.useCallback)(async (name) => {
+    dispatch({ type: "setName", name });
+    try {
+      await A.current.onName?.(name);
+    } catch {
+    }
+    if (nameFieldId) F.current?.apply([{ id: nameFieldId, value: name }]);
+    dispatch({ type: "moment", moment: "meet" });
+    say(script.lines.meet(name));
+  }, [nameFieldId, say, script]);
+  const sendRef = (0, import_react14.useRef)(async () => void 0);
+  const send = (0, import_react14.useCallback)(async (text) => {
+    const msg = (text ?? input).trim();
+    if (!msg || S.current.busy) return;
+    stopListening();
+    A.current.cancelSpeech();
+    setSpeaking(false);
+    setInput("");
+    dispatch({ type: "user", text: msg });
+    if (S.current.moment === "askName") {
+      const n = cleanName(msg);
+      if (n && n.split(" ").length <= 3) {
+        await handleName(n);
+        return;
+      }
+    }
+    dispatch({ type: "busy", busy: true });
+    setThinking(true);
+    try {
+      const f = F.current;
+      const snapshot = f?.snapshot() ?? [];
+      const nav = f?.nav ? { stepTitle: f.nav.stepTitle, stepIndex: f.nav.stepIndex, stepCount: f.nav.stepCount } : null;
+      const res = await A.current.ask({ message: msg, moment: S.current.moment, name: S.current.name, history: S.current.lines.slice(-12), fields: snapshot, nav });
+      let reply = res.text?.trim() ?? "";
+      if (res.name && !S.current.name) {
+        dispatch({ type: "setName", name: res.name });
+        try {
+          await A.current.onName?.(res.name);
+        } catch {
+        }
+        if (nameFieldId) f?.apply([{ id: nameFieldId, value: res.name }]);
+        if (S.current.moment === "askName") {
+          dispatch({ type: "moment", moment: "meet" });
+          if (!reply) reply = script.lines.meet(res.name);
+        }
+      }
+      if (res.fills?.length && f) {
+        const results = f.apply(res.fills);
+        if (!reply) reply = summarizeFills(snapshot, results);
+      }
+      if (res.nav === "next" && f?.nav?.canAdvance) f.nav.next();
+      else if (res.nav === "prev") f?.nav?.prev();
+      if (reply) say(reply);
+    } catch {
+      say("I lost the thread for a second. Say that again, or just keep typing in the form.");
+    } finally {
+      dispatch({ type: "busy", busy: false });
+      setThinking(false);
+    }
+  }, [handleName, input, nameFieldId, say, script, stopListening]);
+  sendRef.current = send;
+  const startMoment = (0, import_react14.useCallback)((m) => {
+    dispatch({ type: "moment", moment: m });
+  }, []);
+  const hour = opts.hour ?? (/* @__PURE__ */ new Date()).getHours();
+  const navKey = fields?.nav ? `${fields.nav.stepIndex}:${fields.nav.stepTitle}` : "";
+  (0, import_react14.useEffect)(() => {
+    if (!enabled) return;
+    const { moment, name } = state;
+    if (moment === "landing") {
+      const k = "landing";
+      if (!announced.current.has(k)) {
+        announced.current.add(k);
+        say(script.lines.landing({ greeting: greetingForHour(hour) }));
+      }
+    } else if (moment === "askName") {
+      const k = "askName";
+      if (!announced.current.has(k)) {
+        announced.current.add(k);
+        say(script.lines.askName());
+      }
+    } else if (moment === "meet") {
+      if (!speaking) {
+        const t = setTimeout(() => dispatch({ type: "moment", moment: "fill" }), state.muted || !state.voiceUnlocked ? 900 : 150);
+        return () => clearTimeout(t);
+      }
+    } else if (moment === "fill") {
+      if (!fields?.nav) return;
+      const k = `step:${navKey}`;
+      if (!announced.current.has(k)) {
+        announced.current.add(k);
+        const line = script.lines.step({ stepTitle: fields.nav.stepTitle, stepIndex: fields.nav.stepIndex, stepCount: fields.nav.stepCount, name });
+        if (line) say(line);
+      }
+    } else if (moment === "done") {
+      const k = "done";
+      if (!announced.current.has(k)) {
+        announced.current.add(k);
+        stopListening();
+        say(script.lines.done(name));
+      }
+    }
+  }, [enabled, state.moment, state.name, state.muted, state.voiceUnlocked, speaking, navKey, fields?.nav, hour, say, script, stopListening, state]);
+  (0, import_react14.useEffect)(() => () => {
+    listenerRef.current?.stop();
+    A.current.cancelSpeech();
+  }, []);
+  const barState = listening ? "listening" : thinking ? "thinking" : speaking ? "speaking" : "idle";
+  const showPermission = enabled && state.micChoice === "unset" && (state.moment === "askName" || state.moment === "meet" || state.moment === "fill");
+  return (0, import_react14.useMemo)(() => ({
+    state,
+    barState,
+    input,
+    setInput,
+    send,
+    onMic,
+    chooseMic,
+    toggleMute,
+    showPermission,
+    unlocked: unlocked || state.voiceUnlocked,
+    startMoment,
+    say,
+    listening,
+    speaking
+  }), [state, barState, input, send, onMic, chooseMic, toggleMute, showPermission, unlocked, startMoment, say, listening, speaking]);
+}
+
+// src/concierge/ShiftConcierge.tsx
+var import_react15 = require("react");
+var import_jsx_runtime14 = require("react/jsx-runtime");
+var CPS = 48;
+function useLayout(layout) {
+  const wide = layout === "auto-float" ? "float" : "column";
+  const [mode, setMode] = (0, import_react15.useState)(layout === "auto" || layout === "auto-float" ? wide : layout);
+  (0, import_react15.useEffect)(() => {
+    if (layout !== "auto" && layout !== "auto-float") {
+      setMode(layout);
+      return;
+    }
+    const compute = () => {
+      const coarse = typeof window.matchMedia === "function" && window.matchMedia("(pointer: coarse)").matches;
+      const w = Math.min(window.innerWidth, window.visualViewport?.width ?? window.innerWidth);
+      setMode(detectMode(w, window.innerHeight, coarse) === "phone" ? "dock" : wide);
+    };
+    compute();
+    window.addEventListener("resize", compute);
+    return () => window.removeEventListener("resize", compute);
+  }, [layout, wide]);
+  return mode;
+}
+function useKeyboardOffset(active) {
+  const [offset, setOffset] = (0, import_react15.useState)(0);
+  (0, import_react15.useEffect)(() => {
+    if (!active || typeof window === "undefined" || !window.visualViewport) return;
+    const vv = window.visualViewport;
+    const update = () => setOffset(Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop)));
+    update();
+    vv.addEventListener("resize", update);
+    vv.addEventListener("scroll", update);
+    return () => {
+      vv.removeEventListener("resize", update);
+      vv.removeEventListener("scroll", update);
+    };
+  }, [active]);
+  return offset;
+}
+function useTyped(text, enabled) {
+  const [n, setN] = (0, import_react15.useState)(enabled ? 0 : text.length);
+  (0, import_react15.useEffect)(() => {
+    if (!enabled) {
+      setN(text.length);
+      return;
+    }
+    setN(0);
+    const start = performance.now();
+    let raf = 0;
+    const tick = (now) => {
+      const next = Math.min(text.length, Math.floor((now - start) / 1e3 * CPS));
+      setN(next);
+      if (next < text.length) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [text, enabled]);
+  return text.slice(0, n);
+}
+function ShiftConcierge(props) {
+  const {
+    lines,
+    barState,
+    input,
+    onInputChange,
+    onSend,
+    onMic,
+    micChoice,
+    onChooseMic,
+    showPermission,
+    muted,
+    onToggleMute,
+    busy = false,
+    layout = "auto",
+    speakerName = "Will",
+    placeholder = "Type here, or tap the mic",
+    permissionText,
+    dockLines = 3,
+    typewriter = true,
+    className = ""
+  } = props;
+  const mode = useLayout(layout);
+  const kb = useKeyboardOffset(mode === "dock");
+  const reduced = typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const last = lines[lines.length - 1];
+  const lastWill = last?.who === "will" ? last : null;
+  const typed = useTyped(lastWill?.text ?? "", typewriter && !reduced && !!lastWill);
+  const shown = mode === "dock" ? lines.slice(-dockLines) : lines;
+  const scroller = (0, import_react15.useRef)(null);
+  const inputRef = (0, import_react15.useRef)(null);
+  (0, import_react15.useLayoutEffect)(() => {
+    const el = scroller.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [shown.length, typed]);
+  (0, import_react15.useEffect)(() => {
+    if (micChoice === "text") inputRef.current?.focus();
+  }, [micChoice]);
+  const onKey = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      onSend();
+    }
+  };
+  const listening = barState === "listening";
+  return /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)(
+    "aside",
+    {
+      className: `ash-cg ash-cg--${mode} ash-surface${className ? ` ${className}` : ""}`,
+      style: mode === "dock" ? { bottom: kb } : void 0,
+      "aria-label": `${speakerName}, your assistant`,
+      children: [
+        /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ash-cg-head", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(ShiftBar, { state: barState, size: 6 }),
+          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "ash-cg-name", children: speakerName }),
+          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("button", { type: "button", className: "ash-cg-mute", onClick: onToggleMute, "aria-pressed": muted, "aria-label": muted ? `Unmute ${speakerName}` : `Mute ${speakerName}`, children: muted ? "Voice off" : "Voice on" })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("div", { ref: scroller, className: "ash-cg-lines", "aria-live": "polite", "aria-relevant": "additions text", children: shown.map((l) => /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("p", { className: `ash-cg-line ash-cg-line--${l.who}`, children: [
+          l === lastWill ? typed : l.text,
+          l === lastWill && typed.length < l.text.length && /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("span", { className: "ash-cg-caret", "aria-hidden": true })
+        ] }, l.id)) }),
+        showPermission && /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ash-cg-perm", role: "group", "aria-label": "How do you want to answer?", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("p", { className: "ash-cg-perm-text", children: permissionText ?? `Answer out loud, or type below. Your choice.` }),
+          /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ash-cg-perm-row", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("button", { type: "button", className: "ash-cg-perm-btn ash-cg-perm-btn--voice", onClick: () => onChooseMic("voice"), children: "Use my voice" }),
+            /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("button", { type: "button", className: "ash-cg-perm-btn", onClick: () => onChooseMic("text"), children: "I'll type" })
+          ] })
+        ] }),
+        /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("div", { className: "ash-cg-row", children: [
+          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
+            "button",
+            {
+              type: "button",
+              className: `ash-cg-mic${listening ? " ash-cg-mic--on" : ""}${micChoice === "denied" ? " ash-cg-mic--off" : ""}`,
+              onClick: onMic,
+              "aria-pressed": listening,
+              "aria-label": listening ? "Stop listening" : micChoice === "denied" ? "Microphone blocked" : "Talk to " + speakerName,
+              children: /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("svg", { viewBox: "0 0 24 24", width: "18", height: "18", "aria-hidden": true, fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round", children: [
+                /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("rect", { x: "9", y: "3", width: "6", height: "11", rx: "3" }),
+                /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("path", { d: "M5 11a7 7 0 0 0 14 0" }),
+                /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("path", { d: "M12 18v3" }),
+                micChoice === "denied" && /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("path", { d: "M4 4l16 16" })
+              ] })
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)(
+            "textarea",
+            {
+              ref: inputRef,
+              className: "ash-cg-input",
+              rows: 1,
+              value: input,
+              placeholder: listening ? "Listening\u2026" : placeholder,
+              onChange: (e) => onInputChange(e.target.value),
+              onKeyDown: onKey,
+              disabled: busy,
+              "aria-label": "Shift box"
+            }
+          ),
+          /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("button", { type: "button", className: "ash-cg-send", onClick: onSend, disabled: busy || !input.trim(), "aria-label": "Send", children: /* @__PURE__ */ (0, import_jsx_runtime14.jsxs)("svg", { viewBox: "0 0 24 24", width: "18", height: "18", "aria-hidden": true, fill: "none", stroke: "currentColor", strokeWidth: "2", strokeLinecap: "round", strokeLinejoin: "round", children: [
+            /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("path", { d: "M5 12h14" }),
+            /* @__PURE__ */ (0, import_jsx_runtime14.jsx)("path", { d: "M13 6l6 6-6 6" })
+          ] }) })
+        ] })
+      ]
+    }
+  );
+}
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
   ACCENT_RGB,
   CanvasLauncher,
   CanvasProvider,
   CanvasTransition,
+  ConciergeField,
+  ConciergeFields,
   DEFAULT_H,
   DUO_FOCUS_SHARE,
+  FILL_HIGHLIGHT_MS,
   GAP,
   GenerativeView,
   HolographicShine,
   LiveCard,
   LiveStat,
+  MAX_LINES,
   MAX_WINDOWS,
   MAX_WINDOWS_PHONE,
   MIN_H,
   MIN_W,
   PageTransition,
+  SILENCE_MS,
   ScrollGenerateCard,
   ShiftBar,
   ShiftCard,
+  ShiftConcierge,
   TiltCard,
   WIDTH_SPAN,
+  WINDOW_MS,
+  cleanName,
+  coerceFill,
+  coerceFills,
+  conciergeReducer,
   detectMode,
+  endsWithQuestion,
+  greetingForHour,
+  initialConciergeState,
+  isShiftShell,
+  matchOption,
   maxWindowsFor,
+  nextLineId,
+  parseMoney,
+  requestMicrophone,
+  snapshotForPrompt,
+  summarizeFills,
   tallH,
+  useAudioGate,
   useCanvas,
+  useConcierge,
+  useConciergeFields,
+  useConciergeNav,
   useGenerate,
-  useHeyShift
+  useHeyShift,
+  webSpeechListener,
+  webSpeechSupported
 });

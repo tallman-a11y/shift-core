@@ -18,3 +18,7 @@ export * from "./canvas";
 // Voice / Hey Shift pipeline
 export { useHeyShift, ShiftBar } from './voice/index.js';
 export type { ShiftBarState, HeyShiftConfig, HeyShiftReturn, ShiftBarProps } from './voice/index.js';
+
+// Shift Concierge — Will-first onboarding (greets, guides, fills the form).
+// Styles live in canvas.css (.ash-cg-*). See shift-core/docs/WILL_FIRST_UI.md.
+export * from "./concierge";

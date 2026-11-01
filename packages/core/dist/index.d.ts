@@ -853,4 +853,80 @@ declare function parseFaxEvent(body: unknown): TelnyxFaxEvent | null;
 /** "Fax from (816) 555-0100 — 4 pages — Sep 21, 2026.pdf" */
 declare function faxDocumentName(from: string | null | undefined, pages: number | null | undefined, at?: Date): string;
 
-export { AnthropicProvider, type BrainConfig, type CollectivePattern, type ContextGraph, type ConversationTurn, type CrossProductEvent, type CrossProductIdentity, EMBED_DIM, type EmbedInputType, type EmbeddingProvider, type FaxClient, type FaxClientConfig, type FaxNumberOrder, type FeedbackEntry, type FeedbackSignal, type FineTuningFormat, type FineTuningPair, type GenomeStore, type KnowledgeChunk, type KnowledgeStore, type LearningStore, type MemoryEntry, type MemorySource, type MemoryStore, type MemoryType, type ModelProvider, type ModelVersion, NoOpContextGraph, NoOpGenomeStore, OllamaProvider, type OpenAICompatConfig, OpenAICompatProvider, type OutcomeRecord, type ProviderMessage, type ProviderResponse, type ProviderTool, type RecordMemoryOpts, type RecordResult, type RetrieveOpts, type RouteDecision, type RouterConfig, RouterProvider, SENSITIVE_PLACEHOLDER, ShiftBrain, type ShiftPersona, type ShiftTool, type SpeakConfig, type SpeakResult, type TelnyxFaxEvent, type ThinkOpts, type ThinkResult, type ToolContext, type ToolExecutor, type ToolInputSchema, ToolRegistry, type TrainingJob, type UserPreferences, VoyageEmbeddingProvider, WILL_VOICE_ID, areaCodeOf, buildSystemPrompt, centroid, cosineSimilarity, createFaxClient, definePersona, exportForFineTuning, faxDocumentName, formatCollectiveIntelligenceForPrompt, formatCrossProductContextForPrompt, formatMemoriesForPrompt, formatPreferencesForPrompt, formatUS, greedyCluster, last10, parseFaxEvent, realSecret, recordMemory, retrieveRelevantMemories, speakConfigFromEnv, synthesizeSpeech, toE164, verifyTelnyxSignature };
+type ConciergeMoment = 'landing' | 'askName' | 'meet' | 'fill' | 'done';
+interface ConciergeFieldSnapshot {
+    id: string;
+    label: string;
+    type: string;
+    required?: boolean;
+    hint?: string;
+    options?: Array<{
+        value: string;
+        label: string;
+        description?: string;
+    }>;
+    value: unknown;
+}
+interface ConciergeContext {
+    product: {
+        name: string;
+        /** What a user of this product is, in one or two words: "real estate investor". */
+        noun: string;
+        /** One paragraph Will may draw on before login (what the product does, price, no promises). */
+        blurb: string;
+    };
+    moment: ConciergeMoment;
+    signedIn: boolean;
+    name?: string | null;
+    stepTitle?: string;
+    stepIndex?: number;
+    stepCount?: number;
+    fields?: ConciergeFieldSnapshot[];
+    /** Short Q&A Will may use for pre-login questions. */
+    faq?: string;
+}
+type ConciergeAction = {
+    type: 'fill_fields';
+    fields: Array<{
+        id: string;
+        value: unknown;
+    }>;
+} | {
+    type: 'set_name';
+    name: string;
+} | {
+    type: 'next_step';
+} | {
+    type: 'prev_step';
+} | {
+    type: 'explain_field';
+    id: string;
+} | {
+    type: 'ask_me';
+};
+interface ConciergeTurn {
+    text: string;
+    actions: ConciergeAction[];
+    toolsInvoked: string[];
+}
+declare const CONCIERGE_TOOL_NAMES: readonly ["fill_fields", "set_name", "next_step", "prev_step", "explain_field", "ask_me"];
+declare function conciergeTools(signedIn: boolean): ProviderTool[];
+/** Turn a tool call into a UI action; unknown or malformed calls return null. */
+declare function parseConciergeToolUse(name: string, input: Record<string, unknown>): ConciergeAction | null;
+declare function formatFieldsForPrompt(fields: ConciergeFieldSnapshot[] | undefined): string;
+/** The system prompt for a concierge turn. Byte-stable for a given moment so it caches well. */
+declare function buildConciergeSystemPrompt(ctx: ConciergeContext): string;
+/**
+ * Run one concierge turn: Will's reply plus the UI actions the model asked for.
+ * The provider runs the tool loop; each tool "executes" by recording the action
+ * and returning a short acknowledgement so the model finishes its sentence.
+ */
+declare function runConcierge(opts: {
+    provider: ModelProvider;
+    context: ConciergeContext;
+    message: string;
+    history?: ProviderMessage[];
+    maxTokens?: number;
+}): Promise<ConciergeTurn>;
+
+export { AnthropicProvider, type BrainConfig, CONCIERGE_TOOL_NAMES, type CollectivePattern, type ConciergeAction, type ConciergeContext, type ConciergeFieldSnapshot, type ConciergeMoment, type ConciergeTurn, type ContextGraph, type ConversationTurn, type CrossProductEvent, type CrossProductIdentity, EMBED_DIM, type EmbedInputType, type EmbeddingProvider, type FaxClient, type FaxClientConfig, type FaxNumberOrder, type FeedbackEntry, type FeedbackSignal, type FineTuningFormat, type FineTuningPair, type GenomeStore, type KnowledgeChunk, type KnowledgeStore, type LearningStore, type MemoryEntry, type MemorySource, type MemoryStore, type MemoryType, type ModelProvider, type ModelVersion, NoOpContextGraph, NoOpGenomeStore, OllamaProvider, type OpenAICompatConfig, OpenAICompatProvider, type OutcomeRecord, type ProviderMessage, type ProviderResponse, type ProviderTool, type RecordMemoryOpts, type RecordResult, type RetrieveOpts, type RouteDecision, type RouterConfig, RouterProvider, SENSITIVE_PLACEHOLDER, ShiftBrain, type ShiftPersona, type ShiftTool, type SpeakConfig, type SpeakResult, type TelnyxFaxEvent, type ThinkOpts, type ThinkResult, type ToolContext, type ToolExecutor, type ToolInputSchema, ToolRegistry, type TrainingJob, type UserPreferences, VoyageEmbeddingProvider, WILL_VOICE_ID, areaCodeOf, buildConciergeSystemPrompt, buildSystemPrompt, centroid, conciergeTools, cosineSimilarity, createFaxClient, definePersona, exportForFineTuning, faxDocumentName, formatCollectiveIntelligenceForPrompt, formatCrossProductContextForPrompt, formatFieldsForPrompt, formatMemoriesForPrompt, formatPreferencesForPrompt, formatUS, greedyCluster, last10, parseConciergeToolUse, parseFaxEvent, realSecret, recordMemory, retrieveRelevantMemories, runConcierge, speakConfigFromEnv, synthesizeSpeech, toE164, verifyTelnyxSignature };

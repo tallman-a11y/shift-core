@@ -413,4 +413,289 @@ interface ShiftBarProps {
 }
 declare function ShiftBar({ state, dots, size, className }: ShiftBarProps): react.JSX.Element;
 
-export { ACCENT_RGB, type Accent, type BlockWidth, type CanvasBlock, CanvasLauncher, type CanvasLauncherProps, type CanvasLimits, type CanvasMode, CanvasProvider, CanvasTransition, type CanvasTransitionProps, DEFAULT_H, DUO_FOCUS_SHARE, GAP, type GenPhase, GenerativeView, type GenerativeViewProps, type HeyShiftConfig, type HeyShiftReturn, HolographicShine, type HolographicShineProps, type LauncherGroup, type LauncherItem, LiveCard, type LiveCardProps, LiveStat, type LiveStatProps, MAX_WINDOWS, MAX_WINDOWS_PHONE, MIN_H, MIN_W, PageTransition, type PageTransitionProps, type ResolveBlock, type SavedBlock, ScrollGenerateCard, type ScrollGenerateCardProps, ShiftBar, type ShiftBarProps, type ShiftBarState, ShiftCard, type ShiftCardProps, type SnapBox, type SnapGhost, type SnapLayout, type SnapPreview, TiltCard, type TiltCardProps, type UseGenerateOptions, WIDTH_SPAN, detectMode, maxWindowsFor, tallH, useCanvas, useGenerate, useHeyShift };
+type Moment = "landing" | "askName" | "meet" | "fill" | "done";
+type MicChoice = "unset" | "voice" | "text" | "denied";
+type FieldType = "text" | "number" | "money" | "tel" | "email" | "select" | "multi";
+interface FieldOption {
+    value: string;
+    label: string;
+    description?: string;
+}
+interface FieldSpec {
+    id: string;
+    label: string;
+    type: FieldType;
+    options?: FieldOption[];
+    required?: boolean;
+    /** One line Will can use to explain the field ("Rough number is fine"). */
+    hint?: string;
+}
+interface FieldSnapshot extends FieldSpec {
+    value: unknown;
+}
+interface FillRequest {
+    id: string;
+    value: unknown;
+}
+type FillResult = {
+    id: string;
+    ok: true;
+    value: unknown;
+} | {
+    id: string;
+    ok: false;
+    reason: string;
+};
+interface Line {
+    id: string;
+    who: "will" | "user";
+    text: string;
+    at: number;
+}
+interface ConciergeState {
+    moment: Moment;
+    name: string | null;
+    micChoice: MicChoice;
+    muted: boolean;
+    voiceUnlocked: boolean;
+    lines: Line[];
+    busy: boolean;
+}
+type ConciergeEvent = {
+    type: "unlockVoice";
+} | {
+    type: "chooseMic";
+    choice: MicChoice;
+} | {
+    type: "setName";
+    name: string;
+} | {
+    type: "will";
+    text: string;
+    id?: string;
+} | {
+    type: "user";
+    text: string;
+    id?: string;
+} | {
+    type: "moment";
+    moment: Moment;
+} | {
+    type: "mute";
+    muted: boolean;
+} | {
+    type: "busy";
+    busy: boolean;
+};
+declare const MAX_LINES = 40;
+declare function initialConciergeState(moment?: Moment): ConciergeState;
+declare function nextLineId(): string;
+declare function conciergeReducer(state: ConciergeState, ev: ConciergeEvent): ConciergeState;
+declare function greetingForHour(hour: number): "Good morning" | "Good afternoon" | "Good evening";
+declare function cleanName(raw: string): string | null;
+/** "$40,000" | "40k" | "about 40 thousand" | "1.2m" | "forty thousand" → 40000 … */
+declare function parseMoney(input: unknown): number | null;
+/**
+ * Match a spoken/typed value to one option: exact value or label first, then
+ * word-stem matches against label + value ("flipping" → Fix & Flip), then the
+ * description ("airbnb" → Short-Term Rental). Ties are refused — Will asks.
+ */
+declare function matchOption(options: FieldOption[], value: unknown): FieldOption | null;
+/** Coerce a value Will proposed into what the field accepts, or say why not. */
+declare function coerceFill(spec: FieldSpec, value: unknown): FillResult;
+/** Coerce a batch against the live snapshot; unknown ids fail instead of throwing. */
+declare function coerceFills(fields: FieldSnapshot[], fills: FillRequest[]): FillResult[];
+/** The field list as the model sees it: ids, labels, choices, current values. */
+declare function snapshotForPrompt(fields: FieldSnapshot[]): string;
+/** "I put Kansas City under markets and Fix & Flip under strategy." */
+declare function summarizeFills(fields: FieldSnapshot[], results: FillResult[]): string;
+/** Does this Will line expect an answer? (Opens the mic window after speaking.) */
+declare function endsWithQuestion(text: string): boolean;
+
+interface ConciergeNav {
+    stepIndex: number;
+    stepTitle: string;
+    stepCount: number;
+    canAdvance: boolean;
+    next: () => void;
+    prev: () => void;
+}
+interface Entry {
+    spec: FieldSpec;
+    get: () => unknown;
+    set: (value: unknown) => void;
+}
+interface ConciergeFieldsValue {
+    register: (entry: Entry) => void;
+    unregister: (id: string) => void;
+    snapshot: () => FieldSnapshot[];
+    /** Coerce + write Will's fills into the registered fields. Returns what landed. */
+    apply: (fills: FillRequest[]) => FillResult[];
+    /** Ids Will filled in the last ~2 s (drives the fill highlight). */
+    justFilled: ReadonlySet<string>;
+    nav: ConciergeNav | null;
+    setNav: (nav: ConciergeNav | null) => void;
+    /** Bumps whenever a field registers/unregisters or the step changes. */
+    version: number;
+}
+declare const FILL_HIGHLIGHT_MS = 2000;
+declare function ConciergeFields({ children }: {
+    children: ReactNode;
+}): react.JSX.Element;
+declare function useConciergeFields(): ConciergeFieldsValue | null;
+interface ConciergeFieldProps {
+    spec: FieldSpec;
+    value: unknown;
+    onChange: (value: unknown) => void;
+    children: ReactNode;
+    className?: string;
+}
+declare function ConciergeField({ spec, value, onChange, children, className }: ConciergeFieldProps): react.JSX.Element;
+/** The wizard publishes its step state so Will can narrate and move it. */
+declare function useConciergeNav(nav: ConciergeNav | null): void;
+
+/** Every Shift native shell stamps "<Product>ShiftApp/<ver>" into the UA. */
+declare function isShiftShell(ua?: string): boolean;
+interface AudioGate {
+    /** True once audio may play (a gesture happened, or we're in a shell). */
+    unlocked: boolean;
+    shell: boolean;
+}
+declare function useAudioGate(onUnlock?: () => void): AudioGate;
+
+interface ListenerHandlers {
+    onText: (text: string, final: boolean) => void;
+    onEnd: () => void;
+    onError: (code: string) => void;
+}
+interface Listener {
+    start: (h: ListenerHandlers) => void;
+    stop: () => void;
+}
+declare function webSpeechSupported(): boolean;
+declare const SILENCE_MS = 1800;
+declare const WINDOW_MS = 15000;
+declare function webSpeechListener(lang?: string): Listener | null;
+/** Ask for the microphone once, in response to the user's tap. Resolves granted/denied. */
+declare function requestMicrophone(): Promise<boolean>;
+
+interface StepContext {
+    stepTitle: string;
+    stepIndex: number;
+    stepCount: number;
+    name: string | null;
+}
+interface ConciergeScript {
+    product: {
+        name: string;
+        noun: string;
+    };
+    lines: {
+        landing: (ctx: {
+            greeting: string;
+        }) => string;
+        askName: () => string;
+        meet: (name: string) => string;
+        /** Return null to say nothing on a step. */
+        step: (ctx: StepContext) => string | null;
+        done: (name: string | null) => string;
+        micDenied: () => string;
+        heardNothing: () => string;
+    };
+}
+interface AskRequest {
+    message: string;
+    moment: Moment;
+    name: string | null;
+    history: Line[];
+    fields: FieldSnapshot[];
+    nav: {
+        stepTitle: string;
+        stepIndex: number;
+        stepCount: number;
+    } | null;
+}
+interface AskResult {
+    text: string;
+    fills?: FillRequest[];
+    name?: string;
+    nav?: "next" | "prev";
+    explain?: string;
+}
+interface ConciergeAdapters {
+    /** Speak a line as Will; resolve when done (or when speech is unavailable). */
+    speak: (text: string) => Promise<void>;
+    cancelSpeech: () => void;
+    ask: (req: AskRequest) => Promise<AskResult>;
+    /** Swap the speech-to-text engine (defaults to Web Speech). */
+    listen?: () => Listener | null;
+    /** Persist the name the moment it is captured (e.g. auth user metadata). */
+    onName?: (name: string) => void | Promise<void>;
+    requestMic?: () => Promise<boolean>;
+}
+interface UseConciergeOptions {
+    script: ConciergeScript;
+    adapters: ConciergeAdapters;
+    /** Off = renders nothing, says nothing (feature flag). */
+    enabled?: boolean;
+    initialMoment?: Moment;
+    /** The registered field that holds the user's name (filled when captured). */
+    nameFieldId?: string;
+    fields?: ConciergeFieldsValue | null;
+    /** Start muted (voice off) — the per-device "quiet" preference. */
+    initialMuted?: boolean;
+    /** Already known (returning user, auth metadata) — skips the name moment. */
+    initialName?: string | null;
+    hour?: number;
+}
+interface UseConciergeReturn {
+    state: ConciergeState;
+    barState: ShiftBarState;
+    input: string;
+    setInput: (v: string) => void;
+    /** Send the box (or the given text) to Will. */
+    send: (text?: string) => Promise<void>;
+    /** Tap the mic: start/stop listening (asks permission on first use). */
+    onMic: () => void;
+    chooseMic: (choice: MicChoice) => void;
+    toggleMute: () => void;
+    /** Show the two-choice permission card? */
+    showPermission: boolean;
+    unlocked: boolean;
+    /** Move the conversation: askName (after signup), done (after save). */
+    startMoment: (m: Moment) => void;
+    /** Have Will say a line (scripted by the product) — text now, voice when allowed. */
+    say: (text: string) => void;
+    listening: boolean;
+    speaking: boolean;
+}
+declare function useConcierge(opts: UseConciergeOptions): UseConciergeReturn;
+
+interface ShiftConciergeProps {
+    lines: Line[];
+    barState: ShiftBarState;
+    input: string;
+    onInputChange: (v: string) => void;
+    onSend: () => void;
+    onMic: () => void;
+    micChoice: MicChoice;
+    onChooseMic: (c: MicChoice) => void;
+    showPermission: boolean;
+    muted: boolean;
+    onToggleMute: () => void;
+    busy?: boolean;
+    /** auto: phone→dock, wide→column. auto-float: phone→dock, wide→floating card (landing pages). */
+    layout?: "auto" | "auto-float" | "dock" | "column" | "float";
+    speakerName?: string;
+    placeholder?: string;
+    /** The permission card copy (product supplies; keep it one short sentence). */
+    permissionText?: string;
+    /** Lines shown in the dock (phones). Column shows the whole transcript. */
+    dockLines?: number;
+    /** Live-type Will's latest line (off for reduced motion). */
+    typewriter?: boolean;
+    className?: string;
+}
+declare function ShiftConcierge(props: ShiftConciergeProps): react.JSX.Element;
+
+export { ACCENT_RGB, type Accent, type AskRequest, type AskResult, type AudioGate, type BlockWidth, type CanvasBlock, CanvasLauncher, type CanvasLauncherProps, type CanvasLimits, type CanvasMode, CanvasProvider, CanvasTransition, type CanvasTransitionProps, type ConciergeAdapters, type ConciergeEvent, ConciergeField, type ConciergeFieldProps, ConciergeFields, type ConciergeFieldsValue, type ConciergeNav, type ConciergeScript, type ConciergeState, DEFAULT_H, DUO_FOCUS_SHARE, FILL_HIGHLIGHT_MS, type FieldOption, type FieldSnapshot, type FieldSpec, type FieldType, type FillRequest, type FillResult, GAP, type GenPhase, GenerativeView, type GenerativeViewProps, type HeyShiftConfig, type HeyShiftReturn, HolographicShine, type HolographicShineProps, type LauncherGroup, type LauncherItem, type Line, type Listener, type ListenerHandlers, LiveCard, type LiveCardProps, LiveStat, type LiveStatProps, MAX_LINES, MAX_WINDOWS, MAX_WINDOWS_PHONE, MIN_H, MIN_W, type MicChoice, type Moment, PageTransition, type PageTransitionProps, type ResolveBlock, SILENCE_MS, type SavedBlock, ScrollGenerateCard, type ScrollGenerateCardProps, ShiftBar, type ShiftBarProps, type ShiftBarState, ShiftCard, type ShiftCardProps, ShiftConcierge, type ShiftConciergeProps, type SnapBox, type SnapGhost, type SnapLayout, type SnapPreview, type StepContext, TiltCard, type TiltCardProps, type UseConciergeOptions, type UseConciergeReturn, type UseGenerateOptions, WIDTH_SPAN, WINDOW_MS, cleanName, coerceFill, coerceFills, conciergeReducer, detectMode, endsWithQuestion, greetingForHour, initialConciergeState, isShiftShell, matchOption, maxWindowsFor, nextLineId, parseMoney, requestMicrophone, snapshotForPrompt, summarizeFills, tallH, useAudioGate, useCanvas, useConcierge, useConciergeFields, useConciergeNav, useGenerate, useHeyShift, webSpeechListener, webSpeechSupported };

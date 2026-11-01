@@ -65,3 +65,180 @@
   .ash-gen-in, .ash-gen-in-1, .ash-gen-in-2, .ash-gen-in-3, .ash-gen-in-4, .ash-gen-in-5,
   .ash-shimmer, .ash-data-pulse { animation: none; }
 }
+
+/* ============================================================================
+   Shift Concierge (.ash-cg-*) — Will's transcript + the Shift box.
+   Dock on phones (fixed bottom, rides the keyboard), column on wide screens.
+   Brand-neutral: every color is a --shift-* token with a neutral fallback.
+   ========================================================================== */
+.ash-cg {
+  --ash-cg-fg: var(--shift-fg, rgba(255, 255, 255, 0.92));
+  --ash-cg-fg-dim: var(--shift-fg-dim, rgba(255, 255, 255, 0.55));
+  --ash-cg-accent: var(--shift-accent, #5b8cff);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px 14px;
+  color: var(--ash-cg-fg);
+  font-size: 15px;
+  line-height: 1.5;
+  border-radius: var(--shift-radius, 1.25rem);
+  box-sizing: border-box;
+  max-width: 100%;
+}
+.ash-cg--dock {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;                        /* inline style adds the keyboard offset */
+  z-index: 60;
+  border-radius: var(--shift-radius, 1.25rem) var(--shift-radius, 1.25rem) 0 0;
+  padding-bottom: calc(14px + env(safe-area-inset-bottom, 0px));
+  max-height: min(46vh, 380px);
+  width: 100%;
+}
+.ash-cg--column {
+  position: sticky;
+  top: 16px;
+  width: 100%;
+  max-height: calc(100vh - 32px);
+}
+.ash-cg-head { display: flex; align-items: center; gap: 10px; }
+.ash-cg-name { font-weight: 600; letter-spacing: 0.01em; }
+.ash-cg-mute {
+  margin-left: auto;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ash-cg-fg-dim);
+  background: transparent;
+  border: 1px solid var(--shift-border, rgba(255, 255, 255, 0.10));
+  border-radius: 999px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.ash-cg-mute[aria-pressed="true"] { color: var(--ash-cg-fg); border-color: var(--ash-cg-accent); }
+.ash-cg-lines {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 2px;
+  scrollbar-width: thin;
+}
+.ash-cg--dock .ash-cg-lines { max-height: 150px; }
+.ash-cg-line { margin: 0; max-width: 100%; overflow-wrap: anywhere; }
+.ash-cg-line--will { color: var(--ash-cg-fg); }
+.ash-cg-line--user {
+  color: var(--ash-cg-fg-dim);
+  align-self: flex-end;
+  text-align: right;
+  font-size: 14px;
+}
+.ash-cg-line--user::before { content: "— "; }
+.ash-cg-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: -0.15em;
+  background: var(--ash-cg-accent);
+  animation: ash-cg-blink 1s steps(2, start) infinite;
+}
+@keyframes ash-cg-blink { to { visibility: hidden; } }
+.ash-cg-perm {
+  border: 1px solid var(--shift-border, rgba(255, 255, 255, 0.10));
+  border-radius: var(--shift-radius-sm, 0.75rem);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: color-mix(in srgb, var(--ash-cg-accent) 8%, transparent);
+}
+.ash-cg-perm-text { margin: 0; font-size: 14px; color: var(--ash-cg-fg-dim); }
+.ash-cg-perm-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.ash-cg-perm-btn {
+  flex: 1 1 0;
+  min-width: 120px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 10px 12px;
+  border-radius: var(--shift-radius-sm, 0.75rem);
+  border: 1px solid var(--shift-border, rgba(255, 255, 255, 0.14));
+  background: transparent;
+  color: var(--ash-cg-fg);
+  cursor: pointer;
+  min-height: 44px;
+}
+.ash-cg-perm-btn--voice { background: var(--ash-cg-accent); border-color: transparent; color: var(--shift-on-accent, #06101c); }
+.ash-cg-row { display: flex; align-items: flex-end; gap: 8px; }
+.ash-cg-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 44px;
+  max-height: 120px;
+  resize: none;
+  font: inherit;
+  font-size: 16px;                   /* ≥16px stops iOS zooming the page on focus */
+  line-height: 1.4;
+  padding: 11px 14px;
+  color: var(--ash-cg-fg);
+  background: var(--shift-input-bg, rgba(255, 255, 255, 0.06));
+  border: 1px solid var(--shift-border, rgba(255, 255, 255, 0.12));
+  border-radius: var(--shift-radius-sm, 0.75rem);
+  outline: none;
+}
+.ash-cg-input:focus-visible { border-color: var(--ash-cg-accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ash-cg-accent) 25%, transparent); }
+.ash-cg-input::placeholder { color: var(--ash-cg-fg-dim); }
+.ash-cg-mic, .ash-cg-send {
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid var(--shift-border, rgba(255, 255, 255, 0.14));
+  background: transparent;
+  color: var(--ash-cg-fg);
+  cursor: pointer;
+}
+.ash-cg-mic--on { background: var(--ash-cg-accent); border-color: transparent; color: var(--shift-on-accent, #06101c); animation: ash-cg-ring 1.4s ease-out infinite; }
+.ash-cg-mic--off { color: var(--ash-cg-fg-dim); }
+.ash-cg-send:disabled { opacity: 0.35; cursor: default; }
+@keyframes ash-cg-ring {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ash-cg-accent) 45%, transparent); }
+  100% { box-shadow: 0 0 0 12px transparent; }
+}
+.ash-cg-mic:focus-visible, .ash-cg-send:focus-visible, .ash-cg-perm-btn:focus-visible, .ash-cg-mute:focus-visible {
+  outline: 2px solid var(--ash-cg-accent);
+  outline-offset: 2px;
+}
+
+/* Fields Will just filled glow for a beat (wrapper painted by <ConciergeField>). */
+.ash-cg-field { border-radius: var(--shift-radius-sm, 0.75rem); transition: box-shadow 0.3s ease; }
+.ash-cg-filled { animation: ash-cg-fill 2s ease-out both; }
+@keyframes ash-cg-fill {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--shift-accent, #5b8cff) 55%, transparent); }
+  30%  { box-shadow: 0 0 0 4px color-mix(in srgb, var(--shift-accent, #5b8cff) 35%, transparent); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+/* Pages that host the dock reserve room so the form's last field is reachable. */
+.ash-cg-dock-pad { padding-bottom: calc(220px + env(safe-area-inset-bottom, 0px)); }
+
+@media (prefers-reduced-motion: reduce) {
+  .ash-cg-caret, .ash-cg-mic--on, .ash-cg-filled { animation: none; }
+}
+
+/* Floating card (landing pages on wide screens): bottom-right, never over the fold's CTA. */
+.ash-cg--float {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  width: min(380px, calc(100vw - 32px));
+  max-height: min(60vh, 520px);
+  z-index: 60;
+}
