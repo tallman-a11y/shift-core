@@ -134,3 +134,5 @@ Guardrails that apply throughout: phone-shell 390 px law, Fluid-UI law (nothing 
 ## 8. Related
 
 Memory: `project_shift_will_first_ui`, `reference_shift_companion_standard`, `project_shift_duo` (window caps + Duo), `feedback_shift_no_permanent_ai_badges`, `feedback_shift_fluid_ui_law`, `reference_apple_webview_laws`, `feedback_shift_store_shell_standard`. Engine: `packages/ui/src/canvas/duo.ts`, `packages/ui/src/voice/*`.
+
+**0.7.1 (2026-11-07):** the voice-or-type card now appears in EVERY moment as soon as Will has spoken (it was onboarding-only, so a landing/dashboard greeting asked a question that nothing could hear and the OS never requested the microphone — Tyler, iPad). The choice is remembered per device (`ash:concierge:mic`; never "denied"); a remembered voice choice auto-listens after Will's next question, which is when the browser/OS mic prompt appears. Opt out with `rememberMic: false`.

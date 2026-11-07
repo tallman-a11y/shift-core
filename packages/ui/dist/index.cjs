@@ -48,6 +48,7 @@ __export(index_exports, {
   MAX_LINES: () => MAX_LINES,
   MAX_WINDOWS: () => MAX_WINDOWS,
   MAX_WINDOWS_PHONE: () => MAX_WINDOWS_PHONE,
+  MIC_CHOICE_KEY: () => MIC_CHOICE_KEY,
   MIN_H: () => MIN_H,
   MIN_W: () => MIN_W,
   PageTransition: () => PageTransition,
@@ -72,8 +73,11 @@ __export(index_exports, {
   maxWindowsFor: () => maxWindowsFor,
   nextLineId: () => nextLineId,
   parseMoney: () => parseMoney,
+  readStoredMicChoice: () => readStoredMicChoice,
   requestMicrophone: () => requestMicrophone,
+  shouldOfferMic: () => shouldOfferMic,
   snapshotForPrompt: () => snapshotForPrompt,
+  storeMicChoice: () => storeMicChoice,
   summarizeFills: () => summarizeFills,
   tallH: () => tallH,
   useAudioGate: () => useAudioGate,
@@ -1862,8 +1866,29 @@ function ShiftBar({ state, dots = 3, size = 7, className = "" }) {
 
 // src/concierge/concierge.ts
 var MAX_LINES = 40;
-function initialConciergeState(moment = "landing") {
-  return { moment, name: null, micChoice: "unset", muted: false, voiceUnlocked: false, lines: [], busy: false };
+function initialConciergeState(moment = "landing", micChoice = "unset") {
+  return { moment, name: null, micChoice, muted: false, voiceUnlocked: false, lines: [], busy: false };
+}
+function shouldOfferMic(state) {
+  if (state.micChoice !== "unset") return false;
+  if (state.moment === "askName" || state.moment === "meet" || state.moment === "fill") return true;
+  return state.lines.some((l) => l.who === "will");
+}
+var MIC_CHOICE_KEY = "ash:concierge:mic";
+function readStoredMicChoice(storage) {
+  try {
+    const v = storage?.getItem(MIC_CHOICE_KEY);
+    return v === "voice" || v === "text" ? v : "unset";
+  } catch {
+    return "unset";
+  }
+}
+function storeMicChoice(storage, choice) {
+  try {
+    if (choice === "voice" || choice === "text") storage?.setItem(MIC_CHOICE_KEY, choice);
+    else if (choice === "unset") storage?.removeItem(MIC_CHOICE_KEY);
+  } catch {
+  }
 }
 var lineSeq = 0;
 function nextLineId() {
@@ -2340,7 +2365,10 @@ async function requestMicrophone() {
 // src/concierge/useConcierge.ts
 var import_react14 = require("react");
 function useConcierge(opts) {
-  const { script, adapters, enabled = true, initialMoment = "landing", nameFieldId, fields = null, initialMuted = false, initialName = null } = opts;
+  const { script, adapters, enabled = true, initialMoment = "landing", nameFieldId, fields = null, initialMuted = false, initialName = null, rememberMic = true } = opts;
+  const rememberRef = (0, import_react14.useRef)(rememberMic);
+  rememberRef.current = rememberMic;
+  const storage = (0, import_react14.useCallback)(() => rememberRef.current && typeof window !== "undefined" ? window.localStorage : null, []);
   const [state, dispatch] = (0, import_react14.useReducer)(conciergeReducer, void 0, () => ({ ...initialConciergeState(initialMoment), muted: initialMuted, name: initialName }));
   const [input, setInput] = (0, import_react14.useState)("");
   const [speaking, setSpeaking] = (0, import_react14.useState)(false);
@@ -2356,6 +2384,10 @@ function useConcierge(opts) {
   const pendingSpeech = (0, import_react14.useRef)(null);
   const announced = (0, import_react14.useRef)(/* @__PURE__ */ new Set());
   const speakGen = (0, import_react14.useRef)(0);
+  (0, import_react14.useEffect)(() => {
+    const stored = readStoredMicChoice(storage());
+    if (stored !== "unset" && S.current.micChoice === "unset") dispatch({ type: "chooseMic", choice: stored });
+  }, [storage]);
   const speakNow = (0, import_react14.useCallback)(async (text) => {
     const gen = ++speakGen.current;
     setSpeaking(true);
@@ -2431,6 +2463,7 @@ function useConcierge(opts) {
       void req().then((ok) => {
         if (ok) {
           dispatch({ type: "chooseMic", choice: "voice" });
+          storeMicChoice(storage(), "voice");
           dispatch({ type: "unlockVoice" });
           const p = pendingSpeech.current;
           pendingSpeech.current = null;
@@ -2444,7 +2477,8 @@ function useConcierge(opts) {
       return;
     }
     dispatch({ type: "chooseMic", choice });
-  }, [say, script, speakNow]);
+    storeMicChoice(storage(), choice);
+  }, [say, script, speakNow, storage]);
   const onMic = (0, import_react14.useCallback)(() => {
     if (listenerRef.current) {
       stopListening();
@@ -2580,7 +2614,7 @@ function useConcierge(opts) {
     A.current.cancelSpeech();
   }, []);
   const barState = listening ? "listening" : thinking ? "thinking" : speaking ? "speaking" : "idle";
-  const showPermission = enabled && state.micChoice === "unset" && (state.moment === "askName" || state.moment === "meet" || state.moment === "fill");
+  const showPermission = enabled && shouldOfferMic(state);
   return (0, import_react14.useMemo)(() => ({
     state,
     barState,
@@ -2792,6 +2826,7 @@ function ShiftConcierge(props) {
   MAX_LINES,
   MAX_WINDOWS,
   MAX_WINDOWS_PHONE,
+  MIC_CHOICE_KEY,
   MIN_H,
   MIN_W,
   PageTransition,
@@ -2816,8 +2851,11 @@ function ShiftConcierge(props) {
   maxWindowsFor,
   nextLineId,
   parseMoney,
+  readStoredMicChoice,
   requestMicrophone,
+  shouldOfferMic,
   snapshotForPrompt,
+  storeMicChoice,
   summarizeFills,
   tallH,
   useAudioGate,

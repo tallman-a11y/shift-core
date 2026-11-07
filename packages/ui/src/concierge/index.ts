@@ -12,8 +12,7 @@ export {
   summarizeFills,
   endsWithQuestion,
   nextLineId,
-  MAX_LINES,
-} from "./concierge";
+  MAX_LINES, shouldOfferMic, readStoredMicChoice, storeMicChoice, MIC_CHOICE_KEY } from "./concierge";
 export type {
   Moment,
   MicChoice,

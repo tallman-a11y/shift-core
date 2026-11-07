@@ -488,7 +488,19 @@ type ConciergeEvent = {
     busy: boolean;
 };
 declare const MAX_LINES = 40;
-declare function initialConciergeState(moment?: Moment): ConciergeState;
+declare function initialConciergeState(moment?: Moment, micChoice?: MicChoice): ConciergeState;
+/**
+ * Offer the voice-or-type card? Before 0.7.1 it showed only during onboarding
+ * (askName / meet / fill), so on a landing or dashboard greeting Will asked a
+ * question and nothing listened — a spoken answer went nowhere and the OS never
+ * asked for the microphone (Tyler, iPad, 2026-11-07). Now: any moment, as soon
+ * as Will has said his first line, until the person picks.
+ */
+declare function shouldOfferMic(state: Pick<ConciergeState, "micChoice" | "moment" | "lines">): boolean;
+/** The per-device memory of how this person answers Will. "denied" is never kept: the browser may allow it next time. */
+declare const MIC_CHOICE_KEY = "ash:concierge:mic";
+declare function readStoredMicChoice(storage: Pick<Storage, "getItem"> | null | undefined): MicChoice;
+declare function storeMicChoice(storage: Pick<Storage, "setItem" | "removeItem"> | null | undefined, choice: MicChoice): void;
 declare function nextLineId(): string;
 declare function conciergeReducer(state: ConciergeState, ev: ConciergeEvent): ConciergeState;
 declare function greetingForHour(hour: number): "Good morning" | "Good afternoon" | "Good evening";
@@ -647,6 +659,8 @@ interface UseConciergeOptions {
     /** Already known (returning user, auth metadata) — skips the name moment. */
     initialName?: string | null;
     hour?: number;
+    /** Remember voice/type across visits (localStorage). Default on. */
+    rememberMic?: boolean;
 }
 interface UseConciergeReturn {
     state: ConciergeState;
@@ -698,4 +712,4 @@ interface ShiftConciergeProps {
 }
 declare function ShiftConcierge(props: ShiftConciergeProps): react.JSX.Element;
 
-export { ACCENT_RGB, type Accent, type AskRequest, type AskResult, type AudioGate, type BlockWidth, type CanvasBlock, CanvasLauncher, type CanvasLauncherProps, type CanvasLimits, type CanvasMode, CanvasProvider, CanvasTransition, type CanvasTransitionProps, type ConciergeAdapters, type ConciergeEvent, ConciergeField, type ConciergeFieldProps, ConciergeFields, type ConciergeFieldsValue, type ConciergeNav, type ConciergeScript, type ConciergeState, DEFAULT_H, DUO_FOCUS_SHARE, FILL_HIGHLIGHT_MS, type FieldOption, type FieldSnapshot, type FieldSpec, type FieldType, type FillRequest, type FillResult, GAP, type GenPhase, GenerativeView, type GenerativeViewProps, type HeyShiftConfig, type HeyShiftReturn, HolographicShine, type HolographicShineProps, type LauncherGroup, type LauncherItem, type Line, type Listener, type ListenerHandlers, LiveCard, type LiveCardProps, LiveStat, type LiveStatProps, MAX_LINES, MAX_WINDOWS, MAX_WINDOWS_PHONE, MIN_H, MIN_W, type MicChoice, type Moment, PageTransition, type PageTransitionProps, type ResolveBlock, SILENCE_MS, type SavedBlock, ScrollGenerateCard, type ScrollGenerateCardProps, ShiftBar, type ShiftBarProps, type ShiftBarState, ShiftCard, type ShiftCardProps, ShiftConcierge, type ShiftConciergeProps, type SnapBox, type SnapGhost, type SnapLayout, type SnapPreview, type StepContext, TiltCard, type TiltCardProps, type UseConciergeOptions, type UseConciergeReturn, type UseGenerateOptions, WIDTH_SPAN, WINDOW_MS, cleanName, coerceFill, coerceFills, conciergeReducer, detectMode, endsWithQuestion, greetingForHour, initialConciergeState, isShiftShell, matchOption, maxWindowsFor, nextLineId, parseMoney, requestMicrophone, snapshotForPrompt, summarizeFills, tallH, useAudioGate, useCanvas, useConcierge, useConciergeFields, useConciergeNav, useGenerate, useHeyShift, webSpeechListener, webSpeechSupported };
+export { ACCENT_RGB, type Accent, type AskRequest, type AskResult, type AudioGate, type BlockWidth, type CanvasBlock, CanvasLauncher, type CanvasLauncherProps, type CanvasLimits, type CanvasMode, CanvasProvider, CanvasTransition, type CanvasTransitionProps, type ConciergeAdapters, type ConciergeEvent, ConciergeField, type ConciergeFieldProps, ConciergeFields, type ConciergeFieldsValue, type ConciergeNav, type ConciergeScript, type ConciergeState, DEFAULT_H, DUO_FOCUS_SHARE, FILL_HIGHLIGHT_MS, type FieldOption, type FieldSnapshot, type FieldSpec, type FieldType, type FillRequest, type FillResult, GAP, type GenPhase, GenerativeView, type GenerativeViewProps, type HeyShiftConfig, type HeyShiftReturn, HolographicShine, type HolographicShineProps, type LauncherGroup, type LauncherItem, type Line, type Listener, type ListenerHandlers, LiveCard, type LiveCardProps, LiveStat, type LiveStatProps, MAX_LINES, MAX_WINDOWS, MAX_WINDOWS_PHONE, MIC_CHOICE_KEY, MIN_H, MIN_W, type MicChoice, type Moment, PageTransition, type PageTransitionProps, type ResolveBlock, SILENCE_MS, type SavedBlock, ScrollGenerateCard, type ScrollGenerateCardProps, ShiftBar, type ShiftBarProps, type ShiftBarState, ShiftCard, type ShiftCardProps, ShiftConcierge, type ShiftConciergeProps, type SnapBox, type SnapGhost, type SnapLayout, type SnapPreview, type StepContext, TiltCard, type TiltCardProps, type UseConciergeOptions, type UseConciergeReturn, type UseGenerateOptions, WIDTH_SPAN, WINDOW_MS, cleanName, coerceFill, coerceFills, conciergeReducer, detectMode, endsWithQuestion, greetingForHour, initialConciergeState, isShiftShell, matchOption, maxWindowsFor, nextLineId, parseMoney, readStoredMicChoice, requestMicrophone, shouldOfferMic, snapshotForPrompt, storeMicChoice, summarizeFills, tallH, useAudioGate, useCanvas, useConcierge, useConciergeFields, useConciergeNav, useGenerate, useHeyShift, webSpeechListener, webSpeechSupported };

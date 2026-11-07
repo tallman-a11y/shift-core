@@ -8,6 +8,9 @@ import {
   greetingForHour,
   initialConciergeState,
   matchOption,
+  readStoredMicChoice,
+  shouldOfferMic,
+  storeMicChoice,
   parseMoney,
   snapshotForPrompt,
   summarizeFills,
@@ -152,5 +155,45 @@ describe("endsWithQuestion", () => {
   it("opens the mic only after a question", () => {
     expect(endsWithQuestion("What's your name? ")).toBe(true);
     expect(endsWithQuestion("Nice to meet you.")).toBe(false);
+  });
+});
+
+describe("voice-or-type card (0.7.1)", () => {
+  const will = { id: "w1", who: "will" as const, text: "Good morning, friend. I'm Will.", at: 1 };
+  it("offers the mic on a landing greeting once Will has spoken", () => {
+    const s = initialConciergeState("landing");
+    expect(shouldOfferMic(s)).toBe(false);
+    expect(shouldOfferMic({ ...s, lines: [will] })).toBe(true);
+  });
+  it("still offers it through onboarding before any line", () => {
+    expect(shouldOfferMic(initialConciergeState("askName"))).toBe(true);
+    expect(shouldOfferMic(initialConciergeState("fill"))).toBe(true);
+  });
+  it("never offers it once a choice exists", () => {
+    expect(shouldOfferMic({ ...initialConciergeState("landing", "voice"), lines: [will] })).toBe(false);
+    expect(shouldOfferMic({ ...initialConciergeState("askName", "text") })).toBe(false);
+    expect(shouldOfferMic({ ...initialConciergeState("askName", "denied") })).toBe(false);
+  });
+  it("remembers voice and type, never denied, and survives a broken storage", () => {
+    const mem = new Map<string, string>();
+    const storage = {
+      getItem: (k: string) => mem.get(k) ?? null,
+      setItem: (k: string, v: string) => void mem.set(k, v),
+      removeItem: (k: string) => void mem.delete(k),
+    };
+    storeMicChoice(storage, "voice");
+    expect(readStoredMicChoice(storage)).toBe("voice");
+    storeMicChoice(storage, "denied");
+    expect(readStoredMicChoice(storage)).toBe("voice");
+    storeMicChoice(storage, "text");
+    expect(readStoredMicChoice(storage)).toBe("text");
+    storeMicChoice(storage, "unset");
+    expect(readStoredMicChoice(storage)).toBe("unset");
+    const broken = { getItem: () => { throw new Error("blocked"); } };
+    expect(readStoredMicChoice(broken)).toBe("unset");
+    expect(readStoredMicChoice(null)).toBe("unset");
+  });
+  it("a restored voice choice starts the state ready to listen", () => {
+    expect(initialConciergeState("landing", "voice").micChoice).toBe("voice");
   });
 });

@@ -15,6 +15,9 @@ import {
   greetingForHour,
   initialConciergeState,
   nextLineId,
+  readStoredMicChoice,
+  shouldOfferMic,
+  storeMicChoice,
   summarizeFills,
 } from "./concierge";
 import type { ConciergeFieldsValue } from "./FieldRegistry";
@@ -89,6 +92,8 @@ export interface UseConciergeOptions {
   /** Already known (returning user, auth metadata) — skips the name moment. */
   initialName?: string | null;
   hour?: number;
+  /** Remember voice/type across visits (localStorage). Default on. */
+  rememberMic?: boolean;
 }
 
 export interface UseConciergeReturn {
@@ -114,7 +119,10 @@ export interface UseConciergeReturn {
 }
 
 export function useConcierge(opts: UseConciergeOptions): UseConciergeReturn {
-  const { script, adapters, enabled = true, initialMoment = "landing", nameFieldId, fields = null, initialMuted = false, initialName = null } = opts;
+  const { script, adapters, enabled = true, initialMoment = "landing", nameFieldId, fields = null, initialMuted = false, initialName = null, rememberMic = true } = opts;
+  const rememberRef = useRef(rememberMic);
+  rememberRef.current = rememberMic;
+  const storage = useCallback(() => (rememberRef.current && typeof window !== "undefined" ? window.localStorage : null), []);
   const [state, dispatch] = useReducer(conciergeReducer, undefined, () => ({ ...initialConciergeState(initialMoment), muted: initialMuted, name: initialName }));
   const [input, setInput] = useState("");
   const [speaking, setSpeaking] = useState(false);
@@ -132,6 +140,13 @@ export function useConcierge(opts: UseConciergeOptions): UseConciergeReturn {
   const pendingSpeech = useRef<string | null>(null);
   const announced = useRef(new Set<string>());
   const speakGen = useRef(0);
+
+  // Restore the remembered voice/type choice after mount (never in the initializer:
+  // the server renders "unset", and a client-only read there would mismatch on hydration).
+  useEffect(() => {
+    const stored = readStoredMicChoice(storage());
+    if (stored !== "unset" && S.current.micChoice === "unset") dispatch({ type: "chooseMic", choice: stored });
+  }, [storage]);
 
   // ── Voice out ──────────────────────────────────────────────────────────────
   const speakNow = useCallback(async (text: string) => {
@@ -217,6 +232,7 @@ export function useConcierge(opts: UseConciergeOptions): UseConciergeReturn {
       void req().then((ok) => {
         if (ok) {
           dispatch({ type: "chooseMic", choice: "voice" });
+          storeMicChoice(storage(), "voice");
           dispatch({ type: "unlockVoice" });
           // The tap that granted the mic is a gesture: speak the pending line, then listen.
           const p = pendingSpeech.current;
@@ -231,7 +247,8 @@ export function useConcierge(opts: UseConciergeOptions): UseConciergeReturn {
       return;
     }
     dispatch({ type: "chooseMic", choice });
-  }, [say, script, speakNow]);
+    storeMicChoice(storage(), choice);
+  }, [say, script, speakNow, storage]);
 
   const onMic = useCallback(() => {
     if (listenerRef.current) { stopListening(); return; }
@@ -347,7 +364,8 @@ export function useConcierge(opts: UseConciergeOptions): UseConciergeReturn {
   useEffect(() => () => { listenerRef.current?.stop(); A.current.cancelSpeech(); }, []);
 
   const barState: ShiftBarState = listening ? "listening" : thinking ? "thinking" : speaking ? "speaking" : "idle";
-  const showPermission = enabled && state.micChoice === "unset" && (state.moment === "askName" || state.moment === "meet" || state.moment === "fill");
+  // Any moment, once Will has spoken, until the person picks voice or type (see shouldOfferMic).
+  const showPermission = enabled && shouldOfferMic(state);
 
   return useMemo(() => ({
     state, barState, input, setInput, send, onMic, chooseMic, toggleMute, showPermission, unlocked: unlocked || state.voiceUnlocked, startMoment, say, listening, speaking,

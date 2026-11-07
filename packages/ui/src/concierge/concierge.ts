@@ -70,8 +70,42 @@ export type ConciergeEvent =
 
 export const MAX_LINES = 40;
 
-export function initialConciergeState(moment: Moment = "landing"): ConciergeState {
-  return { moment, name: null, micChoice: "unset", muted: false, voiceUnlocked: false, lines: [], busy: false };
+export function initialConciergeState(moment: Moment = "landing", micChoice: MicChoice = "unset"): ConciergeState {
+  return { moment, name: null, micChoice, muted: false, voiceUnlocked: false, lines: [], busy: false };
+}
+
+/**
+ * Offer the voice-or-type card? Before 0.7.1 it showed only during onboarding
+ * (askName / meet / fill), so on a landing or dashboard greeting Will asked a
+ * question and nothing listened — a spoken answer went nowhere and the OS never
+ * asked for the microphone (Tyler, iPad, 2026-11-07). Now: any moment, as soon
+ * as Will has said his first line, until the person picks.
+ */
+export function shouldOfferMic(state: Pick<ConciergeState, "micChoice" | "moment" | "lines">): boolean {
+  if (state.micChoice !== "unset") return false;
+  if (state.moment === "askName" || state.moment === "meet" || state.moment === "fill") return true;
+  return state.lines.some((l) => l.who === "will");
+}
+
+/** The per-device memory of how this person answers Will. "denied" is never kept: the browser may allow it next time. */
+export const MIC_CHOICE_KEY = "ash:concierge:mic";
+
+export function readStoredMicChoice(storage: Pick<Storage, "getItem"> | null | undefined): MicChoice {
+  try {
+    const v = storage?.getItem(MIC_CHOICE_KEY);
+    return v === "voice" || v === "text" ? v : "unset";
+  } catch {
+    return "unset";
+  }
+}
+
+export function storeMicChoice(storage: Pick<Storage, "setItem" | "removeItem"> | null | undefined, choice: MicChoice): void {
+  try {
+    if (choice === "voice" || choice === "text") storage?.setItem(MIC_CHOICE_KEY, choice);
+    else if (choice === "unset") storage?.removeItem(MIC_CHOICE_KEY);
+  } catch {
+    /* private mode / blocked storage: the choice just doesn't persist */
+  }
 }
 
 let lineSeq = 0;

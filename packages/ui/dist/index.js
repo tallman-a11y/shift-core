@@ -1790,8 +1790,29 @@ function ShiftBar({ state, dots = 3, size = 7, className = "" }) {
 
 // src/concierge/concierge.ts
 var MAX_LINES = 40;
-function initialConciergeState(moment = "landing") {
-  return { moment, name: null, micChoice: "unset", muted: false, voiceUnlocked: false, lines: [], busy: false };
+function initialConciergeState(moment = "landing", micChoice = "unset") {
+  return { moment, name: null, micChoice, muted: false, voiceUnlocked: false, lines: [], busy: false };
+}
+function shouldOfferMic(state) {
+  if (state.micChoice !== "unset") return false;
+  if (state.moment === "askName" || state.moment === "meet" || state.moment === "fill") return true;
+  return state.lines.some((l) => l.who === "will");
+}
+var MIC_CHOICE_KEY = "ash:concierge:mic";
+function readStoredMicChoice(storage) {
+  try {
+    const v = storage?.getItem(MIC_CHOICE_KEY);
+    return v === "voice" || v === "text" ? v : "unset";
+  } catch {
+    return "unset";
+  }
+}
+function storeMicChoice(storage, choice) {
+  try {
+    if (choice === "voice" || choice === "text") storage?.setItem(MIC_CHOICE_KEY, choice);
+    else if (choice === "unset") storage?.removeItem(MIC_CHOICE_KEY);
+  } catch {
+  }
 }
 var lineSeq = 0;
 function nextLineId() {
@@ -2276,7 +2297,10 @@ async function requestMicrophone() {
 // src/concierge/useConcierge.ts
 import { useCallback as useCallback4, useEffect as useEffect10, useMemo as useMemo4, useReducer, useRef as useRef10, useState as useState10 } from "react";
 function useConcierge(opts) {
-  const { script, adapters, enabled = true, initialMoment = "landing", nameFieldId, fields = null, initialMuted = false, initialName = null } = opts;
+  const { script, adapters, enabled = true, initialMoment = "landing", nameFieldId, fields = null, initialMuted = false, initialName = null, rememberMic = true } = opts;
+  const rememberRef = useRef10(rememberMic);
+  rememberRef.current = rememberMic;
+  const storage = useCallback4(() => rememberRef.current && typeof window !== "undefined" ? window.localStorage : null, []);
   const [state, dispatch] = useReducer(conciergeReducer, void 0, () => ({ ...initialConciergeState(initialMoment), muted: initialMuted, name: initialName }));
   const [input, setInput] = useState10("");
   const [speaking, setSpeaking] = useState10(false);
@@ -2292,6 +2316,10 @@ function useConcierge(opts) {
   const pendingSpeech = useRef10(null);
   const announced = useRef10(/* @__PURE__ */ new Set());
   const speakGen = useRef10(0);
+  useEffect10(() => {
+    const stored = readStoredMicChoice(storage());
+    if (stored !== "unset" && S.current.micChoice === "unset") dispatch({ type: "chooseMic", choice: stored });
+  }, [storage]);
   const speakNow = useCallback4(async (text) => {
     const gen = ++speakGen.current;
     setSpeaking(true);
@@ -2367,6 +2395,7 @@ function useConcierge(opts) {
       void req().then((ok) => {
         if (ok) {
           dispatch({ type: "chooseMic", choice: "voice" });
+          storeMicChoice(storage(), "voice");
           dispatch({ type: "unlockVoice" });
           const p = pendingSpeech.current;
           pendingSpeech.current = null;
@@ -2380,7 +2409,8 @@ function useConcierge(opts) {
       return;
     }
     dispatch({ type: "chooseMic", choice });
-  }, [say, script, speakNow]);
+    storeMicChoice(storage(), choice);
+  }, [say, script, speakNow, storage]);
   const onMic = useCallback4(() => {
     if (listenerRef.current) {
       stopListening();
@@ -2516,7 +2546,7 @@ function useConcierge(opts) {
     A.current.cancelSpeech();
   }, []);
   const barState = listening ? "listening" : thinking ? "thinking" : speaking ? "speaking" : "idle";
-  const showPermission = enabled && state.micChoice === "unset" && (state.moment === "askName" || state.moment === "meet" || state.moment === "fill");
+  const showPermission = enabled && shouldOfferMic(state);
   return useMemo4(() => ({
     state,
     barState,
@@ -2727,6 +2757,7 @@ export {
   MAX_LINES,
   MAX_WINDOWS,
   MAX_WINDOWS_PHONE,
+  MIC_CHOICE_KEY,
   MIN_H,
   MIN_W,
   PageTransition,
@@ -2751,8 +2782,11 @@ export {
   maxWindowsFor,
   nextLineId,
   parseMoney,
+  readStoredMicChoice,
   requestMicrophone,
+  shouldOfferMic,
   snapshotForPrompt,
+  storeMicChoice,
   summarizeFills,
   tallH,
   useAudioGate,
