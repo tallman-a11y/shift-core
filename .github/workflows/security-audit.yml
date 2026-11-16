@@ -1,0 +1,30 @@
+# Vulnerability scan of the dependency tree (AllShift vulnerability-management policy, 2026-11-16).
+# Runs on every push to main, every PR, and every Monday morning. Fails on a CRITICAL advisory in
+# production dependencies (the policy's 7-day class); high/medium surface through Dependabot alerts.
+name: Security audit
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  schedule:
+    - cron: "0 12 * * 1" # Mondays 06:00 America/Chicago (CST)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  npm-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Audit production dependencies (fail on critical)
+        run: npm audit --omit=dev --audit-level=critical
+      - name: Full audit report (informational)
+        if: always()
+        run: npm audit --audit-level=moderate || true

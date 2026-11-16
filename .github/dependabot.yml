@@ -1,0 +1,25 @@
+# Dependency and vulnerability scanning (AllShift vulnerability-management policy, 2026-11-16).
+# Dependabot opens security updates as soon as an advisory lands and groups routine
+# bumps weekly so the patch SLA (critical 7d / high 30d / medium 90d) has a paper trail.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Chicago
+    open-pull-requests-limit: 10
+    groups:
+      minor-and-patch:
+        update-types: [minor, patch]
+    labels: [dependencies, security]
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: America/Chicago
+    labels: [dependencies]
